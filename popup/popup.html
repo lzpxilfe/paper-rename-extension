@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>논문 PDF 인용식 파일명</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="../src/constants.js" defer></script>
+  <script src="../src/citation.js" defer></script>
+  <script src="../src/filename.js" defer></script>
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>파일명 조립</h1>
+        <p id="page-source">샘플 논문</p>
+      </div>
+      <label class="switch">
+        <input id="enabled-toggle" type="checkbox">
+        <span class="switch-track" aria-hidden="true"></span>
+        <span id="enabled-label">켜짐</span>
+      </label>
+    </header>
+
+    <section class="preview-panel">
+      <label for="preview-output">미리보기</label>
+      <output id="preview-output"></output>
+    </section>
+
+    <section class="recipe-panel">
+      <div class="section-head">
+        <h2>현재 순서</h2>
+        <button type="button" id="reset-template">기본값</button>
+      </div>
+      <div id="recipe-list" class="recipe-list" aria-label="현재 파일명 순서"></div>
+    </section>
+
+    <section class="palette-panel">
+      <h2>항목</h2>
+      <div id="field-palette" class="palette-grid"></div>
+      <h2>구분</h2>
+      <div id="separator-palette" class="palette-grid compact"></div>
+    </section>
+
+    <section class="settings-row">
+      <label class="checkbox-row">
+        <input id="include-pages" type="checkbox">
+        <span>쪽수 포함</span>
+      </label>
+      <label class="length-row">
+        <span>최대 길이</span>
+        <input id="max-length" type="number" min="80" max="240" step="10">
+      </label>
+    </section>
+
+    <footer>
+      <span id="save-status" role="status">저장됨</span>
+    </footer>
+  </main>
+</body>
+</html>
