@@ -559,6 +559,35 @@ fixtureCases.forEach(([file, url, source, title, journal, year]) => {
   });
 });
 
+test("eArticle metadata removes trailing navigation link labels", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head><title>eArticle</title></head>
+    <body>
+      <h2 class="articleTitle">2022 개정 교육과정 분석을 통한 초등학교 인공지능윤리 교육 프로그램 개발</h2>
+      <ul>
+        <li><strong>저자</strong> 문상필</li>
+        <li><strong>학술지명</strong> 한국인공지능교육학회 학술대회</li>
+        <li><strong>권</strong> 2022한국인공지능교육학회동계학술대회2022.12<a href="#">바로가기</a></li>
+        <li><strong>발행기관</strong> 한국인공지능교육학회 <a href="#">바로가기</a></li>
+        <li><strong>발행년도</strong> 2022</li>
+      </ul>
+    </body>
+    </html>
+  `, "https://www.earticle.net/Article/A1");
+
+  assert.equal(actual.publisher, "한국인공지능교육학회");
+  assert.equal(actual.volume, "2022한국인공지능교육학회동계학술대회2022.12");
+
+  const rendered = filename.renderFilename(actual, filename.safeSettings());
+  assert.equal(
+    rendered,
+    "문상필, 2022, 「2022 개정 교육과정 분석을 통한 초등학교 인공지능윤리 교육 프로그램 개발」, 『한국인공지능교육학회 학술대회』 2022한국인공지능교육학회동계학술대회2022.12, 한국인공지능교육학회.pdf"
+  );
+  assert.ok(!rendered.includes("바로가기"));
+});
+
 test("Google Scholar meta tags are correctly parsed from HTML", () => {
   const html = `
     <!doctype html>

@@ -33,10 +33,16 @@
       .replace(/\s+/g, "");
   }
 
+  function stripNavigationLabels(value) {
+    return normalizeSpaces(value)
+      .replace(/(?:\s*(?:바로가기|원문보기|원문\s*보기|상세보기|상세\s*보기|초록보기|초록\s*보기)\s*)+$/g, "")
+      .trim();
+  }
+
   function cleanValue(value) {
-    return fixTypography(String(value || "")
+    return stripNavigationLabels(fixTypography(String(value || "")
       .replace(/\u00a0/g, " ")
-      .replace(/\s+/g, " "));
+      .replace(/\s+/g, " ")));
   }
 
   function splitTitle(rawValue) {
