@@ -6,7 +6,8 @@
   "permissions": [
     "downloads",
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.riss.kr/*",

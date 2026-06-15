@@ -129,19 +129,43 @@
     return quoted ? absolutizeUrl(quoted[1]) : "";
   }
 
+  function extractStreamDocsIdFromJs(text) {
+    if (!text) {
+      return "";
+    }
+    const explicitMatch = text.match(/(?:streamdocsId|sItemId)[=;:'"]+([A-Za-z0-9_-]+)/i);
+    if (explicitMatch) {
+      return explicitMatch[1];
+    }
+    const numberMatch = text.match(/['"](\d{12,20})['"]/);
+    if (numberMatch) {
+      return numberMatch[1];
+    }
+    return "";
+  }
+
   function downloadUrlFromControl(control) {
     if (!control || !control.getAttribute) {
       return "";
     }
-    const direct = control.getAttribute("href") ||
-      control.getAttribute("data-url") ||
+    const href = control.getAttribute("href") || "";
+    const onclick = control.getAttribute("onclick") || "";
+    const dataUrl = control.getAttribute("data-url") ||
       control.getAttribute("data-href") ||
-      control.getAttribute("data-file");
-    const directUrl = absolutizeUrl(direct);
+      control.getAttribute("data-file") || "";
+
+    const directUrl = absolutizeUrl(dataUrl || href);
     if (directUrl) {
       return directUrl;
     }
-    return firstUrlFromJs(control.getAttribute("onclick"));
+
+    const jsText = (href.startsWith("javascript:") ? href : "") + " " + onclick;
+    const sId = extractStreamDocsIdFromJs(jsText);
+    if (sId) {
+      return `https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=${sId}`;
+    }
+
+    return firstUrlFromJs(onclick);
   }
 
   function originalFilenameFromControl(control, downloadUrl) {
@@ -168,6 +192,10 @@
     try {
       let docToExtract = document;
       let urlToExtract = location.href;
+
+      if (constants && typeof constants.isBlacklistedSite === "function" && constants.isBlacklistedSite(urlToExtract)) {
+        return lastMetadata || metadataModule.blankMetadata(metadataModule.detectSource(urlToExtract), urlToExtract);
+      }
 
       if (isViewerPage && window.opener) {
         try {
@@ -382,6 +410,9 @@
   }
 
   function handlePossibleDownload(event) {
+    if (constants && typeof constants.isBlacklistedSite === "function" && constants.isBlacklistedSite(location.href)) {
+      return;
+    }
     const control = safeClosest(event.target, "a, button, input, select, option, [role='button'], [tabindex], [onclick], [data-url], [data-href], [data-file], [class*='down'], [class*='file'], [class*='full']");
     if (!isLikelyDownloadControl(control)) {
       return;
@@ -420,7 +451,7 @@
   document.addEventListener("keydown", handleKeyboard, true);
 
   function sendInitialContext() {
-    if (isViewerPage || isLoginPage) {
+    if (isLoginPage) {
       return;
     }
     const metadata = getCurrentMetadata();

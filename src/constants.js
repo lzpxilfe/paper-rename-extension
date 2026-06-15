@@ -19,6 +19,7 @@
     KOREASCIENCE: "KoreaScience",
     SCIENCEON: "ScienceON",
     KRM: "KRM",
+    DCOLLECTION: "dCollection",
     UNKNOWN: "unknown"
   };
 
@@ -37,9 +38,9 @@
     DISABLED_TITLE: `${APP_TITLE} - 꺼짐`
   };
 
-  const CONTEXT_TTL_MS = 8 * 60 * 1000;
-  // 다운로드 직전 클릭 컨텍스트를 최근으로 간주하는 윈도우 (2분)
-  const RECENT_CONTEXT_WINDOW_MS = 2 * 60 * 1000;
+  const CONTEXT_TTL_MS = 30 * 60 * 1000;
+  // 다운로드 직전 클릭 컨텍스트를 최근으로 간주하는 윈도우 (20분)
+  const RECENT_CONTEXT_WINDOW_MS = 20 * 60 * 1000;
   // RISS 상세 페이지 보강을 기다리는 최대 딜레이
   const CONTEXT_SETTLE_DELAY_MS = 800;
   const MAX_CONTEXTS = 30;
@@ -53,14 +54,15 @@
 
   const KNOWN_HOST_PATTERNS = [
     /riss/i,
-    /kci\.go\.kr$/i,
-    /kiss\.kstudy\.com$/i,
-    /dbpia\.(?:com|co\.kr)$/i,
-    /earticle\.net$/i,
+    /kci/i,
+    /kiss/i,
+    /dbpia/i,
+    /earticle/i,
     /scholar.*kyobobook/i,
-    /koreascience\.or\.kr$/i,
-    /scienceon\.kisti\.re\.kr$/i,
-    /krm\.or\.kr$/i
+    /koreascience/i,
+    /scienceon/i,
+    /krm/i,
+    /dcollection/i
   ];
 
   function isAcademicSite(url) {
@@ -75,14 +77,30 @@
     }
   }
 
+  const BLACKLIST_DOMAINS_PATTERN = /heritage\.go\.kr|nrich\.go\.kr|nihc\.go\.kr|gogung\.go\.kr|khs\.go\.kr|cha\.go\.kr|nch\.go\.kr/i;
+
+  function isBlacklistedSite(url) {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      const path = parsed.pathname;
+      return BLACKLIST_DOMAINS_PATTERN.test(host) || BLACKLIST_DOMAINS_PATTERN.test(path);
+    } catch (_e) {
+      return false;
+    }
+  }
+
   const api = {
     ACADEMIC_DOMAINS_PATTERN,
     ACTION,
     APP_TITLE,
+    BLACKLIST_DOMAINS_PATTERN,
     CONTEXT_SETTLE_DELAY_MS,
     CONTEXT_TTL_MS,
     DEFAULT_SETTINGS,
     isAcademicSite,
+    isBlacklistedSite,
     KNOWN_HOST_PATTERNS,
     MAX_CONTEXTS,
     MAX_FILENAME_LENGTH_DEFAULT,

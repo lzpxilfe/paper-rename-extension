@@ -12,6 +12,7 @@ const filenameModule = globalThis.PaperRenameFilename;
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
+const OPENER_CONTEXT_COPY_WINDOW_MS = 5000;
 
 function hasChromeApi(path) {
   let current = typeof chrome !== "undefined" ? chrome : null;
@@ -71,6 +72,21 @@ function hasContextMetadata(context) {
     return false;
   }
   const authors = Array.isArray(metadata.authors) ? metadata.authors : [];
+
+  const totalAuthorLength = authors.reduce((sum, name) => sum + String(name || "").length, 0);
+  if (totalAuthorLength > 40) {
+    return false;
+  }
+  if (authors.some((name) => String(name || "").length > 20)) {
+    return false;
+  }
+
+  const orgKeywords = /(?:관리소|박물관|연구소|대학교|대학원|유산원|연구원|기획단|문화재|유산청)/;
+  const orgMatchCount = authors.filter(name => orgKeywords.test(String(name || ""))).length;
+  if (orgMatchCount >= 2) {
+    return false;
+  }
+
   return Boolean(
     metadata.titleMain ||
     authors.length ||
@@ -156,8 +172,13 @@ function extractPaperId(urlText) {
     return "";
   }
   try {
+    const sdMatch = urlText.match(/(?:streamdocsId|sItemId)[=;:'"]+([A-Za-z0-9_-]+)/i);
+    if (sdMatch) {
+      return `dcollection:${sdMatch[1]}`;
+    }
+
     const parsed = new URL(urlText);
-    const keys = ["cn", "artiId", "key", "nodeId", "p_mat_type", "artId", "articleId"];
+    const keys = ["cn", "artiId", "key", "nodeId", "p_mat_type", "artId", "articleId", "sItemId", "streamdocsId"];
     for (const key of keys) {
       const val = parsed.searchParams.get(key);
       if (val) {
@@ -173,7 +194,7 @@ function extractPaperId(urlText) {
       return `scholar:${scholarMatch[1]}`;
     }
   } catch (_error) {
-    const match = urlText.match(/(?:cn|artiId|key|nodeId|p_mat_type)=([A-Za-z0-9_-]+)/i);
+    const match = urlText.match(/(?:cn|artiId|key|nodeId|p_mat_type|sItemId|streamdocsId)[=;:'"]+([A-Za-z0-9_-]+)/i);
     if (match) {
       return match[1];
     }
@@ -193,6 +214,9 @@ function contextScore(entry, downloadItem, now) {
   const originalFilename = normalizeUrl(context.originalFilename || (context.metadata && context.metadata.originalFilename) || "");
   const itemFilename = normalizeUrl(downloadItem.filename || "");
   let score = 0;
+  const age = now - context.capturedAt;
+  const sameTab = Number.isInteger(downloadItem.tabId) && downloadItem.tabId >= 0 && entry.tabId === downloadItem.tabId;
+  const freshContext = age >= 0 && age <= OPENER_CONTEXT_COPY_WINDOW_MS;
 
   const itemId = extractPaperId(itemUrl) || extractPaperId(itemReferrer);
   const contextId = extractPaperId(pageUrl) || extractPaperId(contextUrl);
@@ -200,7 +224,7 @@ function contextScore(entry, downloadItem, now) {
     score += 12;
   }
 
-  if (Number.isInteger(downloadItem.tabId) && downloadItem.tabId >= 0 && entry.tabId === downloadItem.tabId) {
+  if (sameTab) {
     score += 8;
   }
   if (contextUrl && itemUrl && (itemUrl === contextUrl || itemUrl.includes(contextUrl) || contextUrl.includes(itemUrl))) {
@@ -209,10 +233,10 @@ function contextScore(entry, downloadItem, now) {
   if (pageUrl && itemReferrer && (itemReferrer === pageUrl || itemReferrer.includes(pageUrl) || pageUrl.includes(itemReferrer))) {
     score += 6;
   }
-  if (pageUrl && itemUrl && sameKnownPaperHost(pageUrl, itemUrl)) {
+  if ((sameTab || freshContext) && pageUrl && itemUrl && sameKnownPaperHost(pageUrl, itemUrl)) {
     score += 5;
   }
-  if (contextUrl && itemUrl && sameKnownPaperHost(contextUrl, itemUrl)) {
+  if ((sameTab || freshContext) && contextUrl && itemUrl && sameKnownPaperHost(contextUrl, itemUrl)) {
     score += 5;
   }
   if (contextUrl && itemUrl && basename(contextUrl) && itemUrl.includes(basename(contextUrl))) {
@@ -222,8 +246,7 @@ function contextScore(entry, downloadItem, now) {
     score += 4;
   }
 
-  const age = now - context.capturedAt;
-  if (age >= 0 && age < 5000) {
+  if (freshContext) {
     score += 3;
   } else if (age >= 0 && age < constants.CONTEXT_TTL_MS) {
     score += 1;
@@ -233,6 +256,11 @@ function contextScore(entry, downloadItem, now) {
 
 function contextAge(entry, now) {
   return now - (entry && entry.context ? entry.context.capturedAt : 0);
+}
+
+function isFreshContextEntry(entry, now) {
+  const age = contextAge(entry, now);
+  return age >= 0 && age <= OPENER_CONTEXT_COPY_WINDOW_MS;
 }
 
 function selectContextEntry(downloadItem, nowValue) {
@@ -247,16 +275,14 @@ function selectContextEntry(downloadItem, nowValue) {
   }
   if ((!best || best.score < 4) && pendingContexts.length === 1) {
     const only = pendingContexts[0];
-    const age = contextAge(only, now);
-    if (age >= 0 && age < constants.RECENT_CONTEXT_WINDOW_MS && only.context.metadata && only.context.metadata.titleMain) {
+    if (isFreshContextEntry(only, now) && only.context.metadata && only.context.metadata.titleMain) {
       best = { entry: only, score: best ? best.score : 0 };
     }
   }
   if ((!best || best.score < 3) && isLikelyViewerDownload(downloadItem)) {
     const recent = pendingContexts
       .filter((entry) => {
-        const age = contextAge(entry, now);
-        return age >= 0 && age < constants.RECENT_CONTEXT_WINDOW_MS && entry.context.metadata && entry.context.metadata.titleMain;
+        return isFreshContextEntry(entry, now) && entry.context.metadata && entry.context.metadata.titleMain;
       })
       .sort((left, right) => right.context.capturedAt - left.context.capturedAt)[0];
     if (recent) {
@@ -321,6 +347,15 @@ function rememberContext(context, sender) {
 }
 
 function findContextEntry(downloadItem, callback) {
+  if (downloadItem) {
+    const itemUrl = downloadItem.finalUrl || downloadItem.url || "";
+    const itemReferrer = downloadItem.referrer || downloadItem.tabUrl || "";
+    if (constants && typeof constants.isBlacklistedSite === "function" &&
+        (constants.isBlacklistedSite(itemUrl) || constants.isBlacklistedSite(itemReferrer))) {
+      callback(null);
+      return;
+    }
+  }
   const now = Date.now();
   const first = selectContextEntry(downloadItem, now);
   if (shouldWaitForRissEnrichment(first, downloadItem, now)) {
@@ -328,6 +363,47 @@ function findContextEntry(downloadItem, callback) {
     return;
   }
   chooseAfterRestore(downloadItem, callback);
+}
+
+function handleTabRelation(tab) {
+  if (!tab || !tab.id || !tab.url) {
+    return;
+  }
+  const urlText = normalizeUrl(tab.url).toLowerCase();
+  const isViewer = /(?:viewer|view|originalview|poporiginal|vieworiginal)/i.test(urlText) ||
+                   /(?:viewer|view|originalview|poporiginal|vieworiginal)/i.test(filenameModule.filenameFromUrl(urlText));
+  if (!isViewer) {
+    return;
+  }
+  const openerId = tab.openerTabId;
+  if (!Number.isInteger(openerId) || openerId < 0) {
+    return;
+  }
+  const now = Date.now();
+  const parentEntry = pendingContexts
+    .filter((entry) => entry && entry.tabId === openerId && entry.context && entry.context.metadata)
+    .sort((a, b) => b.context.capturedAt - a.context.capturedAt)[0];
+  if (!parentEntry) {
+    return;
+  }
+  const parentAge = now - parentEntry.context.capturedAt;
+  if (parentAge < 0 || parentAge > OPENER_CONTEXT_COPY_WINDOW_MS) {
+    return;
+  }
+  const exists = pendingContexts.some((entry) => entry && entry.tabId === tab.id && entry.context && entry.context.metadata);
+  if (exists) {
+    return;
+  }
+  const clonedContext = Object.assign({}, parentEntry.context, {
+    capturedAt: now
+  });
+  pendingContexts.push({
+    context: clonedContext,
+    tabId: tab.id,
+    frameId: 0
+  });
+  cleanupContexts(now);
+  persistContexts();
 }
 
 function registerChromeListeners() {
@@ -339,6 +415,17 @@ function registerChromeListeners() {
   chrome.runtime.onStartup.addListener(() => loadSettings());
   loadSettings();
   restoreContexts();
+
+  if (hasChromeApi(["tabs", "onCreated"])) {
+    chrome.tabs.onCreated.addListener(handleTabRelation);
+  }
+  if (hasChromeApi(["tabs", "onUpdated"])) {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      if (changeInfo.url) {
+        handleTabRelation(tab);
+      }
+    });
+  }
 
   if (hasChromeApi(["storage", "onChanged"])) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -400,6 +487,7 @@ if (typeof module !== "undefined" && module.exports) {
     cleanupContexts,
     contextScore,
     findContextEntry,
+    handleTabRelation,
     hasContextMetadata,
     loadSettings,
     rememberContext,

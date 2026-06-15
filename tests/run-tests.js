@@ -299,7 +299,7 @@ test("background uses newest RISS context when viewer download is delayed", () =
     }),
     pageUrl: "https://www.riss.kr/search/Search.do?query=test",
     downloadUrl: "",
-    capturedAt: now
+    capturedAt: now - 1000
   }, { tab: { id: 7 }, frameId: 0 });
   background.rememberContext({
     metadata: Object.assign({}, fullMeta, {
@@ -308,8 +308,13 @@ test("background uses newest RISS context when viewer download is delayed", () =
     }),
     pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=be54d9b8bc7cdb09",
     downloadUrl: "",
-    capturedAt: now + 1000
+    capturedAt: now
   }, { tab: { id: 7 }, frameId: 0 });
+  background.handleTabRelation({
+    id: 12,
+    url: "https://viewer.example.test/download",
+    openerTabId: 7
+  });
 
   const entry = background.chooseContextEntry({
     tabId: 12,
@@ -706,6 +711,250 @@ test("applyFactsToMetadata falls back to publisher institution if thesisInfo lac
   assert.equal(parsed.thesisInstitution, "서울시립대학교");
   assert.equal(parsed.thesisDegree, "석사학위논문");
   assert.equal(parsed.publisher, "서울시립대학교 석사학위논문");
+});
+
+test("dCollection detectSource detects dCollection urls", () => {
+  assert.equal(metadata.detectSource("https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=000001234567"), "dCollection");
+  assert.equal(metadata.detectSource("https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=72059375539019568"), "dCollection");
+});
+
+test("dCollection viewer background match links details using streamdocsId", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  // 1. 상세페이지에서 "원문보기" 클릭 시뮬레이션
+  const downloadUrl = "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=72059375539019568";
+
+  const dcolMeta = {
+    authors: ["정태준"],
+    titleMain: "인공지능을 활용한 매장유산 분포 예측 통합 연구",
+    publisher: "서울시립대학교 석사학위논문",
+    year: "2025",
+    originalFilename: "article.pdf",
+    source: "dCollection",
+    pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=000001234567"
+  };
+
+  background.rememberContext({
+    metadata: dcolMeta,
+    pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=000001234567",
+    downloadUrl: downloadUrl,
+    capturedAt: now
+  }, { tab: { id: 5 }, frameId: 0 });
+
+  // 2. 뷰어 창에서 실제 다운로드 시뮬레이션
+  const entry = background.chooseContextEntry({
+    tabId: 9, // 다른 탭 (새 창)
+    url: "https://viewer.dcollection.net/streamdocs/view/sd;streamdocsId=72059375539019568",
+    filename: "originalViewer.pdf"
+  }, now + 500);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, "인공지능을 활용한 매장유산 분포 예측 통합 연구");
+});
+
+test("constants.isBlacklistedSite returns true for blacklisted domains", () => {
+  assert.ok(constants.isBlacklistedSite("https://portal.nrich.go.kr/page"));
+  assert.ok(constants.isBlacklistedSite("https://www.heritage.go.kr/download/file"));
+  assert.ok(!constants.isBlacklistedSite("https://www.riss.kr/search/detail/DetailView.do"));
+});
+
+test("background ignores blacklisted site downloads", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://portal.nrich.go.kr/page",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 8 }, frameId: 0 });
+
+  background.findContextEntry({
+    tabId: 8,
+    url: "https://portal.nrich.go.kr/download/pdf",
+    filename: "report.pdf"
+  }, (entry) => {
+    assert.equal(entry, null);
+  });
+});
+
+test("hasContextMetadata filters out polluted author lists containing organizations", () => {
+  // 정상 데이터
+  assert.ok(background.hasContextMetadata({
+    metadata: {
+      authors: ["김영희", "박철수"],
+      titleMain: "정상 논문 제목"
+    }
+  }));
+
+  // 비정상 데이터: 저자명 총합 40자 초과
+  assert.ok(!background.hasContextMetadata({
+    metadata: {
+      authors: ["한국전통문화대학교 국립고궁박물관 국립무형유산원 국립문화유산연구원 국립해양유산연구소 궁능유적본부"],
+      titleMain: "오염된 논문 제목"
+    }
+  }));
+
+  // 비정상 데이터: 저자명에 기관 키워드 2개 이상 포함
+  assert.ok(!background.hasContextMetadata({
+    metadata: {
+      authors: ["서울시립대학교", "국립문화유산연구원"],
+      titleMain: "오염된 논문 제목"
+    }
+  }));
+});
+
+test("background matches context even after 15 minutes", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://scienceon.kisti.re.kr/srch/selectPORSrchArticle.do?cn=JAKO201020733098474",
+    downloadUrl: "",
+    capturedAt: now - 15 * 60 * 1000 // 15분 전
+  }, { tab: { id: 10 }, frameId: 0 });
+
+  const entry = background.chooseContextEntry({
+    tabId: 10,
+    url: "https://scienceon.kisti.re.kr/commons/util/originalView.do",
+    filename: "download.pdf"
+  }, now);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("background matches sameKnownPaperHost with relaxed subdomains", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://scienceon.kisti.re.kr/srch/selectPORSrchArticle.do?cn=JAKO201020733098474",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 11 }, frameId: 0 });
+
+  // 다운로드 서버가 서브도메인이 다른 'pdf.scienceon.kisti.re.kr' 등일 때
+  const entry = background.chooseContextEntry({
+    tabId: 11,
+    url: "https://pdf.scienceon.kisti.re.kr/commons/util/originalView.do",
+    filename: "download.pdf"
+  }, now + 100);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("viewer page matches download using tabId thanks to initial context", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  // 뷰어 페이지가 로드되었을 때 (content.js 시뮬레이션)
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://scienceon.kisti.re.kr/commons/util/originalView.do?cn=JAKO201020733098474",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 15 }, frameId: 0 }); // tabId는 15
+
+  // 뷰어 탭 내부에서 PDF 다운로드 클릭 시 (tabId는 15)
+  const entry = background.chooseContextEntry({
+    tabId: 15,
+    url: "https://scienceon.kisti.re.kr/commons/util/pdfDownload.do",
+    filename: "download.pdf"
+  }, now + 500);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("tabs openerTabId relation copies parent context to viewer tab", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  // 1. 상세페이지 탭(ID: 20)에서 서지 정보가 등록됨
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=000001234567",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 20 }, frameId: 0 });
+
+  // 2. 부모 탭(ID: 20)에 의해 새 뷰어 탭(ID: 25)이 열렸을 때 (탭 관계 이벤트 전파 시뮬레이션)
+  background.handleTabRelation({
+    id: 25,
+    url: "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=144116969580369159",
+    openerTabId: 20
+  });
+
+  // 3. 자식 뷰어 탭(ID: 25)에서 PDF 다운로드 시뮬레이션
+  const entry = background.chooseContextEntry({
+    tabId: 25,
+    url: "https://viewer.dcollection.net/streamdocs/view/sd;streamdocsId=144116969580369159",
+    filename: "download.pdf"
+  }, now + 500);
+
+  // 4. 동일 탭 매칭(tabId: 25)을 통해 매칭 성공하고 부모 탭의 정보 복구 확인
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("tabs openerTabId relation ignores stale parent context", () => {
+  background._state.reset();
+  const now = Date.now();
+  const staleMeta = Object.assign({}, fullMeta, {
+    titleMain: "stale parent paper",
+    source: "dCollection"
+  });
+
+  background.rememberContext({
+    metadata: staleMeta,
+    pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=old-paper",
+    downloadUrl: "",
+    capturedAt: now - 6000
+  }, { tab: { id: 30 }, frameId: 0 });
+
+  background.handleTabRelation({
+    id: 31,
+    url: "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=new-paper",
+    openerTabId: 30
+  });
+
+  assert.ok(!background._state.pendingContexts.some((entry) => entry.tabId === 31));
+  assert.equal(background.chooseContextEntry({
+    tabId: 31,
+    url: "https://viewer.dcollection.net/streamdocs/view/sd;streamdocsId=new-paper",
+    filename: "download.pdf"
+  }, now), null);
+});
+
+test("tabs openerTabId relation copies fresh parent context", () => {
+  background._state.reset();
+  const now = Date.now();
+  const freshMeta = Object.assign({}, fullMeta, {
+    titleMain: "fresh parent paper",
+    source: "dCollection"
+  });
+
+  background.rememberContext({
+    metadata: freshMeta,
+    pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=fresh-paper",
+    downloadUrl: "",
+    capturedAt: now - 2000
+  }, { tab: { id: 40 }, frameId: 0 });
+
+  background.handleTabRelation({
+    id: 41,
+    url: "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=fresh-paper",
+    openerTabId: 40
+  });
+
+  const copied = background._state.pendingContexts.find((entry) => entry.tabId === 41);
+  assert.ok(copied);
+  assert.equal(copied.context.metadata.titleMain, "fresh parent paper");
 });
 
 module.exports = Promise.all(pendingTests);

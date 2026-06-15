@@ -1023,6 +1023,9 @@
     if (/krm\.or\.kr/i.test(host)) {
       return SOURCES.KRM;
     }
+    if (/dcollection/i.test(host) || /dcollection/i.test(parsed.pathname)) {
+      return SOURCES.DCOLLECTION;
+    }
     return SOURCES.UNKNOWN || "unknown";
   }
 
