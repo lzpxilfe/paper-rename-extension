@@ -72,6 +72,21 @@ function hasContextMetadata(context) {
     return false;
   }
   const authors = Array.isArray(metadata.authors) ? metadata.authors : [];
+  const title = String(metadata.titleMain || "");
+  const hasPaperIdentity = Boolean(
+    title ||
+    authors.length ||
+    metadata.journalName ||
+    metadata.publisher ||
+    metadata.pageFirst
+  );
+  if (!hasPaperIdentity) {
+    return false;
+  }
+  if ((metadata.source || context.source) === constants.SOURCES.DCOLLECTION &&
+      /(?:dCollection\s*디지털\s*학술정보\s*유통시스템|디지털\s*학술정보\s*유통시스템)/i.test(title)) {
+    return false;
+  }
 
   const totalAuthorLength = authors.reduce((sum, name) => sum + String(name || "").length, 0);
   if (totalAuthorLength > 40) {

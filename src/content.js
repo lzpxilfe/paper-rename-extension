@@ -247,11 +247,31 @@
     return metadata && metadata.source === constants.SOURCES.RISS && /\/search\//i.test(location.pathname);
   }
 
+  function isGenericPageMetadata(metadata) {
+    const title = normalizeSpaces(metadata && metadata.titleMain);
+    const authors = Array.isArray(metadata && metadata.authors) ? metadata.authors : [];
+    const hasPaperIdentity = Boolean(
+      title ||
+      authors.length ||
+      (metadata && metadata.journalName) ||
+      (metadata && metadata.publisher) ||
+      (metadata && metadata.pageFirst)
+    );
+    return Boolean(
+      metadata &&
+      metadata.source === constants.SOURCES.DCOLLECTION &&
+      (!hasPaperIdentity || /(?:dCollection\s*디지털\s*학술정보\s*유통시스템|디지털\s*학술정보\s*유통시스템)/i.test(title))
+    );
+  }
+
   function shouldUseScopedMetadata(current, scoped) {
     if (!hasUsefulMetadata(scoped)) {
       return false;
     }
     if (!hasUsefulMetadata(current)) {
+      return true;
+    }
+    if (isGenericPageMetadata(current)) {
       return true;
     }
     if (isRissSearchPage(current)) {
@@ -455,7 +475,7 @@
       return;
     }
     const metadata = getCurrentMetadata();
-    if (hasUsefulMetadata(metadata) && !isRissSearchPage(metadata) && !/search|srch/i.test(location.pathname)) {
+    if (hasUsefulMetadata(metadata) && !isGenericPageMetadata(metadata) && !isRissSearchPage(metadata) && !/search|srch/i.test(location.pathname)) {
       const context = {
         metadata,
         pageUrl: location.href,

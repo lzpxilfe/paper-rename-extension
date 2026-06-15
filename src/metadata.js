@@ -988,6 +988,18 @@
     return false;
   }
 
+  function isAcademicListPage(url) {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      const path = parsed.pathname.toLowerCase();
+      if (/riss/i.test(host) && /\/search\/(?:search|result)/i.test(path)) return true;
+      if (/dcollection/i.test(host) && /^\/search(?:\/|$)/i.test(path)) return true;
+    } catch (_e) {}
+    return false;
+  }
+
   function detectSource(url) {
     let parsed;
     try {
@@ -1055,6 +1067,9 @@
 
   function isUsableTitle(value) {
     const text = cleanValue(value);
+    if (/(?:dCollection\s*디지털\s*학술정보\s*유통시스템|디지털\s*학술정보\s*유통시스템)/i.test(text)) {
+      return false;
+    }
     if (/(?:RISS\s*\uac80\uc0c9|\ud1b5\ud569\uac80\uc0c9|\uac80\uc0c9\uacb0\uacfc|KCI\s*\uc6d0\ubb38|\ub17c\ubb38\uc815\ubcf4|\ucd08\ub85d\s*\uc5f4\uae30\s*\ub2eb\uae30\s*\ubc84\ud2bc|\uc6d0\ubb38\s*\ub0b4\ub824\ubc1b\uae30)/i.test(text)) {
       return false;
     }
@@ -1286,7 +1301,7 @@
     if (!doc) {
       return meta;
     }
-    if (isAcademicMainPage(pageUrl)) {
+    if (isAcademicMainPage(pageUrl) || isAcademicListPage(pageUrl)) {
       return meta;
     }
 
@@ -1460,6 +1475,9 @@
   function parseFixtureHtml(html, url) {
     const source = detectSource(url);
     let meta = blankMetadata(source, url);
+    if (isAcademicMainPage(url) || isAcademicListPage(url)) {
+      return meta;
+    }
 
     const jsonLdMeta = parseJsonLdFromHtml(html);
     meta = mergePreferExtra(meta, jsonLdMeta);
@@ -1493,6 +1511,7 @@
     detectSource,
     extractFromDocument,
     fixTypography,
+    isAcademicListPage,
     normalizeMetadata,
     normalizeSpaces,
     parseFixtureHtml,

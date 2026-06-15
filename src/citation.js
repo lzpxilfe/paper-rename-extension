@@ -36,7 +36,18 @@
     return preferred.join("\u00b7");
   }
 
-  function titleText(meta) {
+  function thesisTitleBrackets(settings) {
+    const mode = (settings && settings.thesisTitleBracketMode) || "double";
+    if (mode === "none") {
+      return null;
+    }
+    if (mode === "single") {
+      return ["\u300c", "\u300d"];
+    }
+    return ["\u300e", "\u300f"];
+  }
+
+  function titleText(meta, settings) {
     const main = normalizeSpaces(meta && meta.titleMain);
     const sub = normalizeSpaces(meta && meta.titleSub);
     if (!main && !sub) {
@@ -44,8 +55,15 @@
     }
     const title = sub ? `${main}: ${sub}` : main || sub;
     const isThesis = meta && meta.publisher && /학위논문/.test(meta.publisher);
-    const openBracket = isThesis ? "\u300e" : "\u300c";
-    const closeBracket = isThesis ? "\u300f" : "\u300d";
+    if (isThesis) {
+      const brackets = thesisTitleBrackets(settings);
+      if (!brackets) {
+        return stripPdfExtension(title);
+      }
+      return `${brackets[0]}${stripPdfExtension(title)}${brackets[1]}`;
+    }
+    const openBracket = "\u300c";
+    const closeBracket = "\u300d";
     return `${openBracket}${stripPdfExtension(title)}${closeBracket}`;
   }
 
@@ -87,7 +105,7 @@
       case "year":
         return normalizeSpaces(source.year);
       case "title":
-        return titleText(source);
+        return titleText(source, settings);
       case "journal":
         return journalText(source);
       case "volumeIssue":
@@ -149,6 +167,7 @@
     pageRangeText,
     renderFullCitation,
     stripPdfExtension,
+    thesisTitleBrackets,
     titleText,
     volumeIssueText
   };

@@ -28,7 +28,8 @@
     includePages: false,
     maxFilenameLength: 180,
     template: null,
-    thesisDeptMode: "none"
+    thesisDeptMode: "none",
+    thesisTitleBracketMode: "double"
   };
 
   const ACTION = {

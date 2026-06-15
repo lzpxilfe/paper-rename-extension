@@ -709,13 +709,22 @@
         save();
       });
     }
+    if (els.thesisTitleBracketMode) {
+      els.thesisTitleBracketMode.addEventListener("change", () => {
+        settings.thesisTitleBracketMode = els.thesisTitleBracketMode.value;
+        save();
+      });
+    }
   }
 
   function syncStaticInputs() {
     els.includePages.checked = Boolean(settings.includePages);
     els.maxLength.value = String(settings.maxFilenameLength || 180);
     if (els.thesisDeptMode) {
-      els.thesisDeptMode.value = settings.thesisDeptMode || "paren";
+      els.thesisDeptMode.value = settings.thesisDeptMode || "none";
+    }
+    if (els.thesisTitleBracketMode) {
+      els.thesisTitleBracketMode.value = settings.thesisTitleBracketMode || "double";
     }
   }
 
@@ -736,6 +745,7 @@
     els.resetTemplate = document.getElementById("reset-template");
     els.status = document.getElementById("save-status");
     els.thesisDeptMode = document.getElementById("thesis-dept-mode");
+    els.thesisTitleBracketMode = document.getElementById("thesis-title-bracket-mode");
 
     els.citationOutput = document.getElementById("citation-output");
     els.metaInputs = {

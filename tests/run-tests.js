@@ -184,6 +184,38 @@ test("thesisDeptMode changes thesis publisher formatting", () => {
   assert.equal(actualNone, "백혜림, 2025, 『禮山 伽倻寺址 伽藍 變遷 硏究』, 서울시립대학교 석사학위논문.pdf");
 });
 
+test("thesisTitleBracketMode changes thesis title brackets", () => {
+  const meta = {
+    authors: ["홍길동"],
+    titleMain: "학위논문 제목",
+    publisher: "서울대학교 석사학위논문",
+    year: "2026",
+    originalFilename: "thesis.pdf"
+  };
+
+  const actualDefault = filename.renderFilename(
+    meta,
+    filename.safeSettings()
+  );
+  assert.ok(actualDefault.includes("『학위논문 제목』"));
+
+  const actualSingle = filename.renderFilename(
+    meta,
+    filename.safeSettings({ thesisTitleBracketMode: "single" })
+  );
+  assert.ok(actualSingle.includes("「학위논문 제목」"));
+
+  const actualNone = filename.renderFilename(
+    meta,
+    filename.safeSettings({ thesisTitleBracketMode: "none" })
+  );
+  assert.ok(actualNone.includes("학위논문 제목"));
+  assert.ok(!actualNone.includes("『"));
+  assert.ok(!actualNone.includes("』"));
+  assert.ok(!actualNone.includes("「"));
+  assert.ok(!actualNone.includes("」"));
+});
+
 test("author cleanup removes romanization and duplicate affiliation numbers", () => {
   assert.deepEqual(metadata.splitAuthors("이차원 Lee ChaWon 1·이차원 Lee ChaWon 1"), ["이차원"]);
 });
@@ -230,6 +262,36 @@ test("RISS search page title is not accepted as paper title", () => {
   `, "https://www.riss.kr/search/Search.do?query=%EB%AA%BD%EC%B4%8C%ED%86%A0%EC%84%B1");
 
   assert.equal(actual.titleMain, "");
+});
+
+test("RISS search result list page does not merge all result authors for popup metadata", () => {
+  const authorNodes = [
+    { textContent: "김영애" },
+    { textContent: "채경화" },
+    { textContent: "손영준" },
+    { textContent: "양재명" },
+    { textContent: "구찬동" },
+    { textContent: "김준홍" },
+    { textContent: "김역군" },
+    { textContent: "정성원" }
+  ];
+  const doc = {
+    title: "RISS 검색 - 통합검색",
+    documentElement: {
+      textContent: "김영애 채경화 손영준 양재명 구찬동 김준홍 김역군 정성원 2026"
+    },
+    body: {
+      textContent: "김영애 채경화 손영준 양재명 구찬동 김준홍 김역군 정성원 2026"
+    },
+    querySelector: () => null,
+    querySelectorAll: (selector) => selector.includes("author") ? authorNodes : []
+  };
+
+  const actual = metadata.extractFromDocument(doc, "https://www.riss.kr/search/Search.do?query=test");
+
+  assert.equal(actual.titleMain, "");
+  assert.deepEqual(actual.authors, []);
+  assert.equal(actual.year, "");
 });
 
 test("background chooses the nearest same-tab context", () => {
@@ -716,6 +778,55 @@ test("applyFactsToMetadata falls back to publisher institution if thesisInfo lac
 test("dCollection detectSource detects dCollection urls", () => {
   assert.equal(metadata.detectSource("https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=000001234567"), "dCollection");
   assert.equal(metadata.detectSource("https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=72059375539019568"), "dCollection");
+});
+
+test("dCollection service title is not accepted as paper metadata", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head><title>dCollection 디지털 학술정보 유통시스템</title></head>
+    <body>Copyright 2026 dCollection 디지털 학술정보 유통시스템</body>
+    </html>
+  `, "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=72059375539019568");
+
+  assert.equal(actual.source, "dCollection");
+  assert.equal(actual.titleMain, "");
+  assert.deepEqual(actual.authors, []);
+});
+
+test("dCollection search result row text yields the clicked paper metadata", () => {
+  const actual = metadata.parseResultText(`
+    107  분산점칼만필터를 이용한 휴머노이드 로봇 SLAM 아키텍쳐
+    유정기 | 大田大學校 産業技術硏究所 | 2015 | 산업기술연구소 論文集 | Vol.26 No.2
+    원문보기
+    For a humanoid robot, its non-linear constraints have to be considered for developing a navigation architecture.
+  `, "dCollection", "https://uos.dcollection.net/search");
+
+  assert.deepEqual(actual.authors, ["유정기"]);
+  assert.equal(actual.titleMain, "분산점칼만필터를 이용한 휴머노이드 로봇 SLAM 아키텍쳐");
+  assert.equal(actual.journalName, "산업기술연구소 論文集");
+  assert.equal(actual.volume, "26");
+  assert.equal(actual.issue, "2");
+  assert.equal(actual.year, "2015");
+});
+
+test("background ignores dCollection viewer service metadata", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  background.rememberContext({
+    metadata: {
+      authors: [],
+      titleMain: "dCollection 디지털 학술정보 유통시스템",
+      year: "2026",
+      source: "dCollection",
+      pageUrl: "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=72059375539019568"
+    },
+    pageUrl: "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=72059375539019568",
+    capturedAt: now
+  }, { tab: { id: 51 }, frameId: 0 });
+
+  assert.equal(background._state.pendingContexts.length, 0);
 });
 
 test("dCollection viewer background match links details using streamdocsId", () => {
