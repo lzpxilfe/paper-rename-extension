@@ -42,6 +42,7 @@
   function splitTitle(rawValue) {
     let raw = fixTypography(String(rawValue || "").split("=")[0]);
     raw = raw.replace(/\s*\|\s*.*$/g, "");
+    raw = raw.replace(/^\[(?:논문|학위논문|국내학술논문|연구보고서|보고서|Short\s*Communication|Review|Article)\]\s*/i, "");
     const ranges = [];
     [["『", "』"], ["「", "」"], ["‘", "’"], ["“", "”"]].forEach(([open, close]) => {
       const start = raw.indexOf(open);
@@ -311,7 +312,10 @@
       .split(/--|,|\||;/)
       .map(cleanValue)
       .filter(Boolean);
-    let institution = parts.find((part) => /[\uac00-\ud7a3]*(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\uc5f0\uad6c\uc6d0)/.test(part)) || parts[0] || "";
+    let institution = parts.find((part) => /[\uac00-\ud7a3]*(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\uc5f0\uad6c\uc6d0)/.test(part)) || "";
+    if (!institution && parts[0] && !/(?:학위논문|석사|박사)/.test(parts[0])) {
+      institution = parts[0];
+    }
     const institutionParts = institution.split(/\s+/).filter(Boolean);
     if (institutionParts.length >= 2 && /\ub300\ud559\uad50$/.test(institutionParts[0]) && /\ub300\ud559\uc6d0$/.test(institutionParts[1])) {
       institution = institutionParts[0];
@@ -884,10 +888,29 @@
     }
     if (thesisInfo) {
       const parsedThesis = parseThesisDetails(thesisInfo);
-      next.thesisInstitution = parsedThesis.institution;
+      let inst = parsedThesis.institution;
+      if (!inst) {
+        const fallbackPub = publisher || next.publisher || "";
+        const matchInst = fallbackPub.match(/[\uac00-\ud7a3]*(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\uc5f0\uad6c\uc6d0)/);
+        if (matchInst) {
+          inst = matchInst[0];
+          const instParts = inst.split(/\s+/).filter(Boolean);
+          if (instParts.length >= 2 && /\ub300\ud559\uad50$/.test(instParts[0]) && /\ub300\ud559\uc6d0$/.test(instParts[1])) {
+            inst = instParts[0];
+          } else if (/\ub300\ud559\uad50\ub300\ud559\uc6d0$/.test(inst)) {
+            inst = inst.replace(/\ub300\ud559\uc6d0$/, "");
+          }
+        } else if (fallbackPub) {
+          inst = fallbackPub;
+        }
+      }
+      if (inst && /(?:학위논문|석사|박사)/.test(inst)) {
+        inst = "";
+      }
+      next.thesisInstitution = inst;
       next.thesisDept = parsedThesis.department;
       next.thesisDegree = parsedThesis.degree;
-      next.publisher = [parsedThesis.institution, parsedThesis.department, parsedThesis.degree]
+      next.publisher = [inst, parsedThesis.department, parsedThesis.degree]
         .filter(Boolean).join(" ");
     } else if (!next.publisher && publisher) {
       next.publisher = removeNonKoreanParen(publisher);
@@ -1317,6 +1340,10 @@
     ].forEach((key) => {
       next[key] = cleanValue(next[key]);
     });
+    if (next.journalName) {
+      next.journalName = next.journalName.split("=")[0].trim();
+      next.journalName = next.journalName.replace(/\s*\([A-Za-z0-9\s,.:&'-]+\)\s*$/g, "").trim();
+    }
     return next;
   }
 

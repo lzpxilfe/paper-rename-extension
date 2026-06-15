@@ -684,4 +684,28 @@ test("isUsableTitle and cleanAuthorName filters copyright and site promo texts",
   assert.deepEqual(parsed.authors, []);
 });
 
+test("splitTitle removes brackets paper prefixes like [논문]", () => {
+  const parsed = metadata.splitTitle("[논문]장기간 조위관측자료 분석과 GPS 수준측량 수준원점 성과 재정의");
+  assert.equal(parsed.titleMain, "장기간 조위관측자료 분석과 GPS 수준측량 수준원점 성과 재정의");
+});
+
+test("normalizeMetadata cleans journal english full names and parenthesized english titles", () => {
+  const meta = {
+    journalName: "한국측량학회지 = Journal of the Korean Society of Surveying, Geodesy, Photogrammetry and Cartography"
+  };
+  const parsed = metadata.normalizeMetadata(meta);
+  assert.equal(parsed.journalName, "한국측량학회지");
+});
+
+test("applyFactsToMetadata falls back to publisher institution if thesisInfo lack university", () => {
+  const facts = {
+    "학위논문사항": "학위논문(석사), 2025",
+    "발행기관": "서울시립대학교 일반대학원"
+  };
+  const parsed = metadata.applyFactsToMetadata(metadata.blankMetadata(), facts);
+  assert.equal(parsed.thesisInstitution, "서울시립대학교");
+  assert.equal(parsed.thesisDegree, "석사학위논문");
+  assert.equal(parsed.publisher, "서울시립대학교 석사학위논문");
+});
+
 module.exports = Promise.all(pendingTests);
