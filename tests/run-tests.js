@@ -205,6 +205,18 @@ test("thesisTitleBracketMode changes thesis title brackets", () => {
   );
   assert.ok(actualSingle.includes("「학위논문 제목」"));
 
+  const actualAngle = filename.renderFilename(
+    meta,
+    filename.safeSettings({ thesisTitleBracketMode: "angle" })
+  );
+  assert.ok(actualAngle.includes("〈학위논문 제목〉"));
+
+  const actualDoubleAngle = filename.renderFilename(
+    meta,
+    filename.safeSettings({ thesisTitleBracketMode: "doubleAngle" })
+  );
+  assert.ok(actualDoubleAngle.includes("≪학위논문 제목≫"));
+
   const actualNone = filename.renderFilename(
     meta,
     filename.safeSettings({ thesisTitleBracketMode: "none" })

@@ -187,8 +187,8 @@
   function sanitizeFilenameBase(value, maxBaseLength) {
     const cleaned = stripKnownExtension(value)
       .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
-      .replace(/\s+([」』〉》])/g, "$1")
-      .replace(/([「『〈《])\s+/g, "$1")
+      .replace(/\s+([」』〉》≫])/g, "$1")
+      .replace(/([「『〈《≪])\s+/g, "$1")
       .replace(/\s+/g, " ")
       .replace(/[. ]+$/g, "")
       .trim();

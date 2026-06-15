@@ -44,6 +44,12 @@
     if (mode === "single") {
       return ["\u300c", "\u300d"];
     }
+    if (mode === "angle") {
+      return ["\u3008", "\u3009"];
+    }
+    if (mode === "doubleAngle") {
+      return ["\u226a", "\u226b"];
+    }
     return ["\u300e", "\u300f"];
   }
 
