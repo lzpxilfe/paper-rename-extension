@@ -28,6 +28,20 @@
   const DEFAULT_TEMPLATE = [
     { kind: "field", value: "authors" },
     { kind: "separator", value: "commaSpace" },
+    { kind: "field", value: "year" },
+    { kind: "separator", value: "commaSpace" },
+    { kind: "field", value: "title" },
+    { kind: "separator", value: "commaSpace" },
+    { kind: "field", value: "journal" },
+    { kind: "separator", value: "space" },
+    { kind: "field", value: "volumeIssue" },
+    { kind: "separator", value: "commaSpace" },
+    { kind: "field", value: "publisher" }
+  ];
+
+  const OLD_DEFAULT_TEMPLATE = [
+    { kind: "field", value: "authors" },
+    { kind: "separator", value: "commaSpace" },
     { kind: "field", value: "title" },
     { kind: "separator", value: "commaSpace" },
     { kind: "field", value: "journal" },
@@ -53,6 +67,20 @@
 
   function stripKnownExtension(value) {
     return String(value || "").replace(/\.[A-Za-z0-9]{1,8}$/i, "");
+  }
+
+  function sameTemplate(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((token, index) => {
+      const other = right[index];
+      return token &&
+        other &&
+        token.kind === other.kind &&
+        token.value === other.value &&
+        String(token.text || "") === String(other.text || "");
+    });
   }
 
   function extensionFromFilename(value) {
@@ -91,7 +119,7 @@
 
   function safeSettings(settings) {
     const merged = Object.assign({}, constants.DEFAULT_SETTINGS || {}, settings || {});
-    if (!Array.isArray(merged.template) || merged.template.length === 0) {
+    if (!Array.isArray(merged.template) || merged.template.length === 0 || sameTemplate(merged.template, OLD_DEFAULT_TEMPLATE)) {
       merged.template = clone(DEFAULT_TEMPLATE);
     } else {
       merged.template = merged.template

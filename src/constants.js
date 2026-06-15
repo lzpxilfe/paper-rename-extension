@@ -24,7 +24,7 @@
 
   const DEFAULT_SETTINGS = {
     enabled: true,
-    includePages: true,
+    includePages: false,
     maxFilenameLength: 180,
     template: null
   };

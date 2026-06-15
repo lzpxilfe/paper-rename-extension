@@ -90,12 +90,25 @@
     const text = normalizeSpaces(value);
     let volume = "";
     let issue = "";
+    const safeVol = text.match(/vol\.?\s*([0-9A-Za-z\uac00-\ud7a3-]+)/i);
+    const safeNo = text.match(/no\.?\s*([0-9A-Za-z\uac00-\ud7a3-]+)/i);
+    const safeKorean = text.match(/(\d+)\s*\uad8c\s*(?:(\d+)\s*\ud638)?/);
     const volNo = text.match(/Vol\.?\s*([0-9A-Za-z가-힣.-]+)/i);
     const no = text.match(/No\.?\s*([0-9A-Za-z가-힣.-]+)/i);
     const compact = text.match(/(\d+)\s*\(\s*(\d+)\s*\)/);
     const koreanVolume = text.match(/(?:제\s*)?(\d+)\s*(?:권|집|호)/);
     const koreanIssue = text.match(/(?:제\s*)?\d+\s*(?:권|집)\s*(?:제\s*)?(\d+)\s*호/);
 
+    if (safeVol) {
+      volume = safeVol[1].replace(/[-,.;]+$/g, "");
+    }
+    if (safeNo) {
+      issue = safeNo[1].replace(/[-,.;]+$/g, "");
+    }
+    if (safeKorean) {
+      volume = volume || safeKorean[1];
+      issue = issue || safeKorean[2] || "";
+    }
     if (volNo) {
       volume = volNo[1].replace(/[-,.;]+$/g, "");
     }
@@ -269,7 +282,11 @@
       .split(/--|,|\||;/)
       .map(cleanValue)
       .filter(Boolean);
-    const institution = parts.find((part) => /[\uac00-\ud7a3]*(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\uc5f0\uad6c\uc6d0)/.test(part)) || parts[0] || "";
+    let institution = parts.find((part) => /[\uac00-\ud7a3]*(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\uc5f0\uad6c\uc6d0)/.test(part)) || parts[0] || "";
+    const institutionParts = institution.split(/\s+/).filter(Boolean);
+    if (institutionParts.length >= 2 && /\ub300\ud559\uad50$/.test(institutionParts[0]) && /\ub300\ud559\uc6d0$/.test(institutionParts[1])) {
+      institution = institutionParts[0];
+    }
     const department = parts.find((part) =>
       part !== institution &&
       !parseYear(part) &&
@@ -307,6 +324,68 @@
       }
     }
     return "";
+  }
+
+  function parseKciVolumeText(value) {
+    const text = cleanValue(value);
+    const out = Object.assign({}, parseVolumeIssue(text), parsePages(text));
+    const year = parseYear(text);
+    if (year) {
+      out.year = year;
+    }
+    return out;
+  }
+
+  function parseKciDom(doc) {
+    const out = {};
+    const title = firstText(doc, [
+      "#artiTitle",
+      "[id='artiTitle']",
+      ".article-title",
+      "meta[name='citation_title']",
+      "meta[property='citation_title']"
+    ]);
+    if (isUsableTitle(title)) {
+      Object.assign(out, splitTitle(title));
+    }
+
+    const authorText = qAll(doc, ".author a, .author, [class*='author'] a")
+      .map(textOf)
+      .filter(Boolean)
+      .join(";");
+    const authors = splitAuthors(authorText);
+    if (authors.length) {
+      out.authors = authors;
+    }
+
+    const journal = firstText(doc, [
+      ".journalInfo .jounal a",
+      ".journalInfo .journal a",
+      ".journalInfo [class*='jounal'] a",
+      ".journalInfo [class*='journal'] a",
+      "meta[name='citation_journal_title']"
+    ]);
+    if (journal) {
+      out.journalName = removeNonKoreanParen(journal);
+    }
+
+    const volText = firstText(doc, [
+      ".journalInfo .vol",
+      ".journalInfo [class*='vol']",
+      ".journalInfo"
+    ]);
+    Object.assign(out, parseKciVolumeText(volText));
+
+    const publisher = firstText(doc, [
+      ".journalInfo .pub a",
+      ".journalInfo [class*='pub'] a",
+      "meta[name='citation_publisher']"
+    ]);
+    if (publisher) {
+      out.publisher = removeNonKoreanParen(publisher);
+    }
+
+    return out;
   }
 
   function applyFactsToMetadata(meta, facts) {
@@ -446,7 +525,7 @@
   function extractTitle(doc, source) {
     const sourceTitleSelectors = {
       RISS: ["#thesisInfoDiv .title", "#thesisInfoDiv h3", ".thesisInfo .title"],
-      KCI: [".article-title", ".title", "h3", "h2"],
+      KCI: ["#artiTitle", ".article-title", "h3", "h2"],
       KISS: [".articleTitle", ".title", "h3", "h2"],
       DBpia: [".thesis__tit", ".article-title", ".title", "h1", "h2"],
       eArticle: [".articleTitle", ".title", "h3", "h2"],
@@ -469,6 +548,9 @@
 
   function isUsableTitle(value) {
     const text = cleanValue(value);
+    if (/(?:RISS\s*\uac80\uc0c9|\ud1b5\ud569\uac80\uc0c9|\uac80\uc0c9\uacb0\uacfc|KCI\s*\uc6d0\ubb38|\ub17c\ubb38\uc815\ubcf4|\ucd08\ub85d\s*\uc5f4\uae30\s*\ub2eb\uae30\s*\ubc84\ud2bc|\uc6d0\ubb38\s*\ub0b4\ub824\ubc1b\uae30)/i.test(text)) {
+      return false;
+    }
     if (text.length < 4 || text.length > 180) {
       return false;
     }
@@ -663,6 +745,7 @@
     const facts = collectFactsFromDocument(doc);
     meta = applyFactsToMetadata(meta, facts);
     if (source === SOURCES.KCI) {
+      meta = mergePreferExtra(meta, parseKciDom(doc));
       meta = mergePreferExtra(meta, parseKciCitationText(textOf(doc.body || doc.documentElement || doc)));
     }
     if (!meta.titleMain) {
@@ -753,15 +836,73 @@
     return "";
   }
 
+  function firstHtmlText(html, patterns) {
+    for (const pattern of patterns) {
+      const match = String(html || "").match(pattern);
+      if (match && match[1]) {
+        return stripTags(decodeHtml(match[1]));
+      }
+    }
+    return "";
+  }
+
+  function parseKciHtml(html) {
+    const out = {};
+    const title = firstHtmlText(html, [
+      /<[^>]+id=["']artiTitle["'][^>]*>([\s\S]*?)<\/[^>]+>/i,
+      /<[^>]+class=["'][^"']*article-title[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
+    ]);
+    if (isUsableTitle(title)) {
+      Object.assign(out, splitTitle(title));
+    }
+
+    const authorBlocks = [];
+    const authorPattern = /<[^>]+class=["'][^"']*author[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi;
+    let authorMatch;
+    while ((authorMatch = authorPattern.exec(String(html || "")))) {
+      authorBlocks.push(stripTags(decodeHtml(authorMatch[1])));
+    }
+    const authors = splitAuthors(authorBlocks.join(";"));
+    if (authors.length) {
+      out.authors = authors;
+    }
+
+    const journal = firstHtmlText(html, [
+      /<[^>]+class=["'][^"']*jounal[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i,
+      /<[^>]+class=["'][^"']*journal[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+    ]);
+    if (journal) {
+      out.journalName = removeNonKoreanParen(journal);
+    }
+
+    const volText = firstHtmlText(html, [
+      /<[^>]+class=["'][^"']*vol[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
+    ]);
+    Object.assign(out, parseKciVolumeText(volText));
+
+    const publisher = firstHtmlText(html, [
+      /<[^>]+class=["'][^"']*pub[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+    ]);
+    if (publisher) {
+      out.publisher = removeNonKoreanParen(publisher);
+    }
+
+    return out;
+  }
+
   function parseFixtureHtml(html, url) {
     const source = detectSource(url);
     let meta = blankMetadata(source, url);
     meta = applyFactsToMetadata(meta, collectFactsFromHtml(html));
     if (source === SOURCES.KCI) {
+      meta = mergePreferExtra(meta, parseKciHtml(html));
       meta = mergePreferExtra(meta, parseKciCitationText(stripTags(html)));
     }
     if (!meta.titleMain) {
-      Object.assign(meta, splitTitle(titleFromHtml(html)));
+      const htmlTitle = titleFromHtml(html);
+      if (isUsableTitle(htmlTitle)) {
+        Object.assign(meta, splitTitle(htmlTitle));
+      }
     }
     if (!meta.year) {
       meta.year = parseYear(stripTags(html));

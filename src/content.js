@@ -197,32 +197,35 @@
       return null;
     }
     const selectors = [
-      "li",
-      "article",
-      ".item",
-      ".result",
-      ".result-list",
-      ".search-result",
       ".srchResultListW",
+      ".search-result",
+      ".result-list",
+      ".result",
+      "[class*='result']",
+      ".listCont",
+      ".cont",
+      "article",
+      "section",
       ".cont",
       ".box",
       ".card",
       "tr",
       "dl",
+      "li",
       "section"
     ];
     for (const selector of selectors) {
       const found = safeClosest(control, selector);
-      if (found && found.textContent && found.textContent.length >= control.textContent.length) {
+      if (found && found.textContent && found.textContent.length >= Math.max((control.textContent || "").length + 20, 40)) {
         return found;
       }
     }
     return control;
   }
 
-  function metadataFromControl(control) {
+  function metadataFromControl(control, knownContainer) {
     const current = getCurrentMetadata();
-    const container = nearbyContainer(control);
+    const container = knownContainer || nearbyContainer(control);
     const text = container ? container.innerText || container.textContent || "" : "";
     const scoped = metadataModule.parseResultText(text, current.source || metadataModule.detectSource(location.href), location.href);
     if (shouldUseScopedMetadata(current, scoped)) {
@@ -233,12 +236,73 @@
     return current;
   }
 
+  function mergeMetadata(base, extra) {
+    const next = Object.assign({}, base || {});
+    Object.entries(extra || {}).forEach(([key, value]) => {
+      if (key === "authors") {
+        if (Array.isArray(value) && value.length) {
+          next.authors = value;
+        }
+        return;
+      }
+      if (value) {
+        next[key] = value;
+      }
+    });
+    return next;
+  }
+
+  function sendContext(context) {
+    chrome.runtime.sendMessage({
+      type: constants.MESSAGES.DOWNLOAD_CONTEXT,
+      context
+    }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+
+  function detailUrlFromContainer(container) {
+    if (!container || !container.querySelector) {
+      return "";
+    }
+    const link = container.querySelector("a[href*='DetailView.do'], a[href*='detail/DetailView'], a[href*='p_mat_type']");
+    return link ? absolutizeUrl(link.getAttribute("href")) : "";
+  }
+
+  function enrichRissContextFromDetail(context, container) {
+    if (!context || context.source !== constants.SOURCES.RISS || !/\/search\//i.test(location.pathname) || typeof fetch !== "function") {
+      return;
+    }
+    const detailUrl = detailUrlFromContainer(container);
+    if (!detailUrl) {
+      return;
+    }
+    fetch(detailUrl, { credentials: "include" })
+      .then((response) => response.ok ? response.text() : "")
+      .then((html) => {
+        if (!html) {
+          return;
+        }
+        const detailMetadata = metadataModule.parseFixtureHtml(html, detailUrl);
+        if (!hasUsefulMetadata(detailMetadata)) {
+          return;
+        }
+        sendContext(Object.assign({}, context, {
+          metadata: mergeMetadata(context.metadata, detailMetadata),
+          pageUrl: detailUrl,
+          capturedAt: Date.now()
+        }));
+      })
+      .catch(() => {});
+  }
+
   function sendDownloadContext(control) {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
       return;
     }
     const downloadUrl = downloadUrlFromControl(control);
-    const metadata = metadataFromControl(control);
+    const container = nearbyContainer(control);
+    const metadata = metadataFromControl(control, container);
     if (!hasUsefulMetadata(metadata)) {
       return;
     }
@@ -252,12 +316,8 @@
       source: metadata.source,
       capturedAt: Date.now()
     };
-    chrome.runtime.sendMessage({
-      type: constants.MESSAGES.DOWNLOAD_CONTEXT,
-      context
-    }, () => {
-      void chrome.runtime.lastError;
-    });
+    sendContext(context);
+    enrichRissContextFromDetail(context, container);
   }
 
   function handlePossibleDownload(event) {

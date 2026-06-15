@@ -46,7 +46,7 @@ const fullMeta = {
 test("full citation renders all present fields", () => {
   assert.equal(
     citation.renderFullCitation(fullMeta, filename.safeSettings()),
-    "김영희·박철수, 「근대 문학의 매체성과 독자 — 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회, 2025, 15–42쪽"
+    "김영희·박철수, 2025, 「근대 문학의 매체성과 독자: 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회"
   );
 });
 
@@ -54,7 +54,7 @@ test("citation omits pages when includePages is false", () => {
   const settings = filename.safeSettings({ includePages: false });
   assert.equal(
     citation.renderFullCitation(fullMeta, settings),
-    "김영희·박철수, 「근대 문학의 매체성과 독자 — 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회, 2025"
+    "김영희·박철수, 2025, 「근대 문학의 매체성과 독자: 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회"
   );
 });
 
@@ -69,7 +69,7 @@ test("citation omits empty journal section for thesis-like metadata", () => {
   });
   assert.equal(
     citation.renderFullCitation(thesis, filename.safeSettings()),
-    "김영희·박철수, 「근대 문학의 매체성과 독자 — 잡지 문화를 중심으로」, 서울대학교 대학원, 2025"
+    "김영희·박철수, 2025, 「근대 문학의 매체성과 독자: 잡지 문화를 중심으로」, 서울대학교 대학원"
   );
 });
 
@@ -83,7 +83,7 @@ test("filename sanitizer removes forbidden characters and duplicate extension", 
     originalFilename: "source.pdf"
   }, filename.safeSettings({ includePages: false }));
 
-  assert.equal(actual, "홍길동, 「홍성 홍주읍성 북문지」, 『문화재 연구』, A B 연구소, 2026.pdf");
+  assert.equal(actual, "홍길동, 2026, 「홍성 홍주읍성 북문지」, 『문화재 연구』, A B 연구소.pdf");
 });
 
 test("custom chip order changes rendered filename", () => {
@@ -100,7 +100,7 @@ test("custom chip order changes rendered filename", () => {
 
   assert.equal(
     filename.renderFilename(fullMeta, settings, { filename: "paper.pdf" }),
-    "2025_김영희·박철수_「근대 문학의 매체성과 독자 — 잡지 문화를 중심으로」.pdf"
+    "2025_김영희·박철수_「근대 문학의 매체성과 독자 잡지 문화를 중심으로」.pdf"
   );
 });
 
@@ -120,6 +120,32 @@ test("default field list does not include sequence number", () => {
     .filter((token) => token.kind === "field")
     .map((token) => token.value);
   assert.ok(!fields.includes("sequenceNumber"));
+});
+
+test("default filename matches requested KCI citation filename", () => {
+  const actual = filename.renderFilename({
+    authors: ["이차원", "Lee ChaWon"],
+    titleMain: "백제 한성기 몽촌토성의 성격과 기능",
+    journalName: "백제학보",
+    issue: "53",
+    publisher: "백제학회",
+    year: "2025",
+    originalFilename: "download.pdf"
+  }, filename.safeSettings(), { filename: "download.pdf" });
+
+  assert.equal(actual, "이차원, 2025, 「백제 한성기 몽촌토성의 성격과 기능」, 『백제학보』 53, 백제학회.pdf");
+});
+
+test("default filename matches requested RISS thesis filename", () => {
+  const actual = filename.renderFilename({
+    authors: ["이차원"],
+    titleMain: "백제 한성기 몽촌토성의 축조 목적과 기능",
+    publisher: "서울시립대학교 국사학과 석사학위논문",
+    year: "2025",
+    originalFilename: "000000035976_20260615105228"
+  }, filename.safeSettings(), { filename: "000000035976_20260615105228" });
+
+  assert.equal(actual, "이차원, 2025, 「백제 한성기 몽촌토성의 축조 목적과 기능」, 서울시립대학교 국사학과 석사학위논문.pdf");
 });
 
 test("author cleanup removes romanization and duplicate affiliation numbers", () => {
@@ -149,8 +175,22 @@ test("RISS thesis detail facts extract Korean labels and thesis publisher", () =
 
   assert.deepEqual(actual.authors, ["이차원"]);
   assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 축조 목적과 기능");
-  assert.equal(actual.publisher, "서울시립대학교 일반대학원 국사학과 석사학위논문");
+  assert.equal(actual.publisher, "서울시립대학교 국사학과 석사학위논문");
   assert.equal(actual.year, "2025");
+});
+
+test("RISS search page title is not accepted as paper title", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head><title>RISS 검색 — 통합검색</title></head>
+    <body>
+      <h1>RISS 검색 — 통합검색</h1>
+    </body>
+    </html>
+  `, "https://www.riss.kr/search/Search.do?query=%EB%AA%BD%EC%B4%8C%ED%86%A0%EC%84%B1");
+
+  assert.equal(actual.titleMain, "");
 });
 
 test("background chooses the nearest same-tab context", () => {
@@ -226,6 +266,32 @@ test("background ignores blank viewer contexts", () => {
 
   assert.equal(background._state.pendingContexts.length, 1);
   assert.equal(background._state.pendingContexts[0].context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("KCI DOM metadata uses article title and journalInfo instead of UI text", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <body>
+      <button class="title">초록 열기 닫기 버튼</button>
+      <h3 id="artiTitle">백제 한성기 몽촌토성의 성격과 기능</h3>
+      <div class="author"><a>이차원 Lee ChaWon 1</a></div>
+      <div class="author"><a>이차원 Lee ChaWon 1</a></div>
+      <div class="journalInfo">
+        <span class="jounal"><a>백제학보</a></span>
+        <span class="vol">2025, vol., no.53, pp. 5-60</span>
+        <span class="pub"><a>백제학회</a></span>
+      </div>
+    </body>
+    </html>
+  `, "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003238959");
+
+  assert.deepEqual(actual.authors, ["이차원"]);
+  assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 성격과 기능");
+  assert.equal(actual.journalName, "백제학보");
+  assert.equal(actual.issue, "53");
+  assert.equal(actual.publisher, "백제학회");
+  assert.equal(actual.year, "2025");
 });
 
 test("KCI realistic page prefers citation metadata over UI button text", () => {

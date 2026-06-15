@@ -30,7 +30,10 @@
   }
 
   function joinAuthors(authors) {
-    return asArray(authors).join("·");
+    const values = asArray(authors);
+    const hasKorean = values.some((value) => /[\uac00-\ud7a3]/.test(value));
+    const preferred = hasKorean ? values.filter((value) => /[\uac00-\ud7a3]/.test(value)) : values;
+    return preferred.join("\u00b7");
   }
 
   function titleText(meta) {
@@ -39,13 +42,13 @@
     if (!main && !sub) {
       return "";
     }
-    const title = sub ? `${main} — ${sub}` : main || sub;
-    return `「${stripPdfExtension(title)}」`;
+    const title = sub ? `${main}: ${sub}` : main || sub;
+    return `\u300c${stripPdfExtension(title)}\u300d`;
   }
 
   function journalText(meta) {
     const journal = normalizeSpaces(meta && meta.journalName);
-    return journal ? `『${journal}』` : "";
+    return journal ? `\u300e${journal}\u300f` : "";
   }
 
   function volumeIssueText(meta) {
@@ -54,13 +57,7 @@
     if (volume && issue) {
       return `${volume}(${issue})`;
     }
-    if (volume) {
-      return volume;
-    }
-    if (issue) {
-      return `(${issue})`;
-    }
-    return "";
+    return volume || issue || "";
   }
 
   function pageRangeText(meta, settings) {
@@ -71,10 +68,10 @@
     const first = normalizeSpaces(meta && meta.pageFirst);
     const last = normalizeSpaces(meta && meta.pageLast);
     if (first && last) {
-      return `${first}–${last}쪽`;
+      return `${first}-${last}\ucabd`;
     }
     if (first) {
-      return `${first}쪽`;
+      return `${first}\ucabd`;
     }
     return "";
   }
@@ -106,6 +103,7 @@
   function renderFullCitation(meta, settings) {
     const parts = [
       fieldValue("authors", meta, settings),
+      fieldValue("year", meta, settings),
       fieldValue("title", meta, settings)
     ];
     const journal = fieldValue("journal", meta, settings);
@@ -117,7 +115,6 @@
     }
     parts.push(
       fieldValue("publisher", meta, settings),
-      fieldValue("year", meta, settings),
       fieldValue("pages", meta, settings)
     );
     return compactPunctuation(parts.filter(Boolean).join(", "));
