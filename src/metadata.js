@@ -214,7 +214,19 @@
 
   function looksLikeFieldLabel(label, names) {
     const normalized = cleanLabel(label);
-    return names.some((name) => normalized === cleanLabel(name) || normalized.includes(cleanLabel(name)));
+    return names.some((name) => {
+      const target = cleanLabel(name);
+      if (!normalized || !target) {
+        return false;
+      }
+      if (normalized === target) {
+        return true;
+      }
+      if (/^[\uac00-\ud7a3]$/.test(target)) {
+        return false;
+      }
+      return normalized.includes(target);
+    });
   }
 
   function nextValueElement(element) {
@@ -1097,6 +1109,10 @@
     return /[가-힣A-Za-z0-9]/.test(text);
   }
 
+  function isMetadataUiLabel(value) {
+    return /^(?:논문정보|초록|키워드|참고문헌|인용현황|원문\s*찾아보기|Download|Loading)$/i.test(cleanValue(value));
+  }
+
   function mergePreferExisting(base, extra) {
     const next = Object.assign({}, base || {});
     Object.entries(extra || {}).forEach(([key, value]) => {
@@ -1367,6 +1383,12 @@
     if (next.journalName) {
       next.journalName = next.journalName.split("=")[0].trim();
       next.journalName = next.journalName.replace(/\s*\([A-Za-z0-9\s,.:&'-]+\)\s*$/g, "").trim();
+    }
+    if (isMetadataUiLabel(next.volume)) {
+      next.volume = "";
+    }
+    if (isMetadataUiLabel(next.issue)) {
+      next.issue = "";
     }
     return next;
   }

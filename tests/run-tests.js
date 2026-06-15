@@ -529,6 +529,37 @@ test("KCI realistic page prefers citation metadata over UI button text", () => {
   assert.equal(actual.pageLast, "60");
 });
 
+test("KCI metadata ignores UI tab labels in issue field", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head>
+      <title>KCI</title>
+      <meta name="citation_title" content="인공지능(AI) 기반 역사학 연구와 역사교육의 연구 동향 및 과제">
+      <meta name="citation_author" content="조원진">
+      <meta name="citation_author" content="조영광">
+      <meta name="citation_journal_title" content="고조선단군학">
+      <meta name="citation_volume" content="59">
+      <meta name="citation_issue" content="논문정보">
+      <meta name="citation_publisher" content="고조선단군학회">
+      <meta name="citation_publication_date" content="2026">
+    </head>
+    <body>
+      <nav>논문정보 초록 참고문헌</nav>
+    </body>
+    </html>
+  `, "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003999999");
+
+  assert.equal(actual.volume, "59");
+  assert.equal(actual.issue, "");
+
+  const rendered = filename.renderFilename(actual, filename.safeSettings());
+  assert.equal(
+    rendered,
+    "조원진·조영광, 2026, 「인공지능(AI) 기반 역사학 연구와 역사교육의 연구 동향 및 과제」, 『고조선단군학』 59, 고조선단군학회.pdf"
+  );
+});
+
 test("RISS search result text yields thesis metadata for original-view clicks", () => {
   const actual = metadata.parseResultText(`
     학위논문 1
