@@ -14,12 +14,17 @@
     "https://*.kiss.kstudy.com/Detail*/Ar*",
     "https://*.dbpia.com/journal/articleDetail*",
     "https://*.dbpia.com/journal/detail*",
+    "https://*.dbpia.co.kr/journal/articleDetail*",
+    "https://*.dbpia.co.kr/journal/detail*",
     "https://*.earticle.net/Article/*",
     "https://*.scholar.kyobobook.co.kr/*",
     "https://*.koreascience.or.kr/*",
     "https://scienceon.kisti.re.kr/*",
     "https://*.krm.or.kr/*",
-    "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*"
+    "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*",
+    "https://*.openlib.uos.ac.kr/*",
+    "https://*.dcollection.net/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -38,12 +43,17 @@
         "https://*.kiss.kstudy.com/Detail*/Ar*",
         "https://*.dbpia.com/journal/articleDetail*",
         "https://*.dbpia.com/journal/detail*",
+        "https://*.dbpia.co.kr/journal/articleDetail*",
+        "https://*.dbpia.co.kr/journal/detail*",
         "https://*.earticle.net/Article/*",
         "https://*.scholar.kyobobook.co.kr/*",
         "https://*.koreascience.or.kr/*",
         "https://scienceon.kisti.re.kr/*",
         "https://*.krm.or.kr/*",
-        "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*"
+        "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*",
+        "https://*.openlib.uos.ac.kr/*",
+        "https://*.dcollection.net/*",
+        "https://*/*"
       ],
       "js": [
         "src/constants.js",

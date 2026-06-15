@@ -17,23 +17,24 @@
 }
 
 body {
-  width: 440px;
-  min-height: 560px;
+  width: 400px;
+  min-height: 550px;
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
 .shell {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 8px;
+  padding: 10px;
 }
 
 .topbar,
@@ -44,7 +45,7 @@ input {
 footer {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .topbar {
@@ -75,7 +76,7 @@ h2 {
 }
 
 #page-source {
-  max-width: 270px;
+  max-width: 200px;
   margin-top: 3px;
   overflow: hidden;
   color: var(--muted);
@@ -137,19 +138,21 @@ h2 {
 
 .preview-panel {
   display: grid;
-  gap: 7px;
-  padding: 12px;
+  gap: 4px;
+  padding: 8px 10px;
 }
 
 .preview-panel label {
   font-weight: 700;
   color: var(--muted);
+  font-size: 12px;
 }
 
 #preview-output {
   display: block;
-  min-height: 46px;
-  padding: 10px;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 13px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fbfcfe;
@@ -217,15 +220,17 @@ h2 {
 
 .chip.field,
 .palette-chip.field {
-  border-color: #b9d3ef;
-  background: #eef6ff;
+  border-color: #bac8ff;
+  background: #edf2ff;
+  color: #364fc7;
 }
 
 .chip.separator,
 .palette-chip.separator {
   min-width: 42px;
-  border-color: #d7c7a7;
-  background: #fff8e9;
+  border-color: #ffd8a8;
+  background: #fff4e6;
+  color: #d9480f;
 }
 
 .chip.dragging,
@@ -320,4 +325,256 @@ footer {
 
 .empty-note {
   color: var(--muted);
+}
+
+/* 탭 스타일 */
+.tabs {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.tab-btn {
+  flex: 1;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.tab-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tab-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 탭 패널 */
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: grid;
+  gap: 8px;
+}
+
+/* 서지정보 패널 */
+.meta-container {
+  display: grid;
+  gap: 8px;
+}
+
+.meta-fields {
+  display: grid;
+  gap: 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.meta-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.meta-row.compact {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.meta-row-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.meta-row label {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  margin-left: 2px;
+}
+
+.input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.input-group input {
+  width: 100%;
+  height: 28px;
+  padding: 0 45px 0 8px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fbfcfe;
+  min-width: 0;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.copy-btn {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 24px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 100ms;
+}
+
+.copy-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.copy-btn.copied {
+  background: #e6fcf5;
+  border-color: #a7f3d0;
+  color: #0ca678;
+}
+
+/* 조합된 인용 표기 */
+.citation-box {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.citation-box label {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.citation-output-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#citation-output {
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fbfcfe;
+  resize: none;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#citation-output:focus {
+  outline: none;
+}
+
+#copy-citation {
+  height: 30px;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 100ms;
+}
+
+#copy-citation:hover {
+  opacity: 0.9;
+}
+
+#copy-citation.copied {
+  background: #0ca678;
+}
+
+.academic-warning-banner {
+  padding: 8px 12px;
+  background: #fff9db;
+  border: 1px solid #ffe066;
+  border-radius: 6px;
+  color: #d9480f;
+  font-size: 11.5px;
+  line-height: 1.4;
+  font-weight: 550;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.preset-panel {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.preset-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preset-head label {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.preset-head select {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  max-width: 250px;
+}
+
+.preset-head select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }

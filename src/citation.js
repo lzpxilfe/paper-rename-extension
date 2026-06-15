@@ -43,7 +43,10 @@
       return "";
     }
     const title = sub ? `${main}: ${sub}` : main || sub;
-    return `\u300c${stripPdfExtension(title)}\u300d`;
+    const isThesis = meta && meta.publisher && /학위논문/.test(meta.publisher);
+    const openBracket = isThesis ? "\u300e" : "\u300c";
+    const closeBracket = isThesis ? "\u300f" : "\u300d";
+    return `${openBracket}${stripPdfExtension(title)}${closeBracket}`;
   }
 
   function journalText(meta) {
@@ -101,21 +104,22 @@
   }
 
   function renderFullCitation(meta, settings) {
+    const citationSettings = Object.assign({}, settings || {}, { includePages: true });
     const parts = [
-      fieldValue("authors", meta, settings),
-      fieldValue("year", meta, settings),
-      fieldValue("title", meta, settings)
+      fieldValue("authors", meta, citationSettings),
+      fieldValue("year", meta, citationSettings),
+      fieldValue("title", meta, citationSettings)
     ];
-    const journal = fieldValue("journal", meta, settings);
-    const volumeIssue = fieldValue("volumeIssue", meta, settings);
+    const journal = fieldValue("journal", meta, citationSettings);
+    const volumeIssue = fieldValue("volumeIssue", meta, citationSettings);
     if (journal && volumeIssue) {
       parts.push(`${journal} ${volumeIssue}`);
     } else {
       parts.push(journal || volumeIssue);
     }
     parts.push(
-      fieldValue("publisher", meta, settings),
-      fieldValue("pages", meta, settings)
+      fieldValue("publisher", meta, citationSettings),
+      fieldValue("pages", meta, citationSettings)
     );
     return compactPunctuation(parts.filter(Boolean).join(", "));
   }

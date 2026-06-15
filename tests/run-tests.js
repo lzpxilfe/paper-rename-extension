@@ -58,16 +58,14 @@ const fullMeta = {
 test("full citation renders all present fields", () => {
   assert.equal(
     citation.renderFullCitation(fullMeta, filename.safeSettings()),
-    "김영희·박철수, 2025, 「근대 문학의 매체성과 독자: 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회"
+    "김영희·박철수, 2025, 「근대 문학의 매체성과 독자: 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회, 15-42쪽"
   );
 });
 
-test("citation omits pages when includePages is false", () => {
+test("filename omits pages when includePages is false", () => {
   const settings = filename.safeSettings({ includePages: false });
-  assert.equal(
-    citation.renderFullCitation(fullMeta, settings),
-    "김영희·박철수, 2025, 「근대 문학의 매체성과 독자: 잡지 문화를 중심으로」, 『한국문학연구』 42(3), 한국문학회"
-  );
+  const actual = filename.renderFilename(fullMeta, settings, { filename: "article.pdf" });
+  assert.ok(!actual.includes("15-42쪽"));
 });
 
 test("citation omits empty journal section for thesis-like metadata", () => {
@@ -157,7 +155,7 @@ test("default filename matches requested RISS thesis filename", () => {
     originalFilename: "000000035976_20260615105228"
   }, filename.safeSettings(), { filename: "000000035976_20260615105228" });
 
-  assert.equal(actual, "이차원, 2025, 「백제 한성기 몽촌토성의 축조 목적과 기능」, 서울시립대학교 국사학과 석사학위논문.pdf");
+  assert.equal(actual, "이차원, 2025, 『백제 한성기 몽촌토성의 축조 목적과 기능』, 서울시립대학교 국사학과 석사학위논문.pdf");
 });
 
 test("author cleanup removes romanization and duplicate affiliation numbers", () => {
@@ -433,6 +431,7 @@ const fixtureCases = [
   ["kci-realistic.html", "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003238959", "KCI", "백제 한성기 몽촌토성의 성격과 기능", "백제학보", "2025"],
   ["kiss.html", "https://kiss.kstudy.com/Detail/Ar?key=1", "KISS", "일제강점기 잡지 번역의 양상", "현대문학사", "2023"],
   ["dbpia.html", "https://www.dbpia.com/journal/articleDetail?nodeId=1", "DBpia", "문학장과 출판 네트워크", "인문학연구", "2022"],
+  ["dbpia.html", "https://www.dbpia.co.kr/journal/articleDetail?nodeId=1", "DBpia", "문학장과 출판 네트워크", "인문학연구", "2022"],
   ["earticle.html", "https://www.earticle.net/Article/A1", "eArticle", "근대 독서 문화의 형성", "독서문화연구", "2021"],
   ["scholar.html", "https://scholar.kyobobook.co.kr/article/detail/1", "교보 스콜라", "서사 구조와 기억의 정치", "문화와 서사", "2020"],
   ["scholar.html", "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/article/detail/1", "교보 스콜라", "서사 구조와 기억의 정치", "문화와 서사", "2020"],
@@ -450,6 +449,181 @@ fixtureCases.forEach(([file, url, source, title, journal, year]) => {
     assert.equal(actual.year, year);
     assert.ok(actual.authors.length >= 1);
   });
+});
+
+test("Google Scholar meta tags are correctly parsed from HTML", () => {
+  const html = `
+    <!doctype html>
+    <html>
+    <head>
+      <meta name="citation_title" content="태안읍성의 이전 의미와 굴포운하">
+      <meta name="citation_author" content="이경복">
+      <meta name="citation_author" content="김영희">
+      <meta name="citation_journal_title" content="충청학과 충청문화">
+      <meta name="citation_publication_date" content="2007/12/31">
+      <meta name="citation_volume" content="10">
+      <meta name="citation_issue" content="2">
+      <meta name="citation_firstpage" content="120">
+      <meta name="citation_lastpage" content="150">
+      <meta name="citation_publisher" content="충청학회">
+    </head>
+    <body>
+      <table>
+        <tr><th>저자</th><td>모든 권리 보유</td></tr>
+        <tr><th>제목</th><td>고객센터</td></tr>
+        <tr><th>발행연도</th><td>2008</td></tr>
+      </table>
+    </body>
+    </html>
+  `;
+  const actual = metadata.parseFixtureHtml(html, "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/article/detail/4010028835542");
+  
+  assert.equal(actual.source, "교보 스콜라");
+  assert.equal(actual.titleMain, "태안읍성의 이전 의미와 굴포운하");
+  assert.deepEqual(actual.authors, ["이경복", "김영희"]);
+  assert.equal(actual.journalName, "충청학과 충청문화");
+  assert.equal(actual.year, "2007");
+  assert.equal(actual.volume, "10");
+  assert.equal(actual.issue, "2");
+  assert.equal(actual.pageFirst, "120");
+  assert.equal(actual.pageLast, "150");
+  assert.equal(actual.publisher, "충청학회");
+});
+
+test("Dublin Core meta tags are correctly parsed from unknown host", () => {
+  const html = `
+    <!doctype html>
+    <html>
+    <head>
+      <meta name="DC.title" content="조선 후기 읍성의 축조와 공간 재편">
+      <meta name="DC.creator" content="홍길동">
+      <meta name="DC.publisher" content="조선역사학회">
+      <meta name="DC.issued" content="1999-05-10">
+    </head>
+    <body>
+      <p>본문 내용...</p>
+    </body>
+    </html>
+  `;
+  const actual = metadata.parseFixtureHtml(html, "https://nonacademic.example.com/some-page");
+  
+  assert.equal(actual.source, "unknown");
+  assert.equal(actual.titleMain, "조선 후기 읍성의 축조와 공간 재편");
+  assert.deepEqual(actual.authors, ["홍길동"]);
+  assert.equal(actual.publisher, "조선역사학회");
+  assert.equal(actual.year, "1999");
+});
+
+test("Open Graph and title tag fallbacks are correctly parsed from unknown host", () => {
+  const html = `
+    <!doctype html>
+    <html>
+    <head>
+      <title>일반 블로그 글 제목: 서브 타이틀</title>
+      <meta property="og:site_name" content="티스토리">
+      <meta name="author" content="김영희;박철수">
+    </head>
+    <body>
+      <p>이 글은 2024년도 연구에 관한 것입니다.</p>
+    </body>
+    </html>
+  `;
+  const actual = metadata.parseFixtureHtml(html, "https://blog.example.com/post/123");
+  
+  assert.equal(actual.source, "unknown");
+  assert.equal(actual.titleMain, "일반 블로그 글 제목");
+  assert.equal(actual.titleSub, "서브 타이틀");
+  assert.deepEqual(actual.authors, ["김영희", "박철수"]);
+  assert.equal(actual.journalName, "티스토리");
+  assert.equal(actual.year, "2024");
+});
+
+test("JSON-LD metadata is correctly parsed from unknown host", () => {
+  const html = `
+    <!doctype html>
+    <html>
+    <head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "ScholarlyArticle",
+        "headline": "JSON-LD 기반의 구조화된 서지 정보 추출법",
+        "author": [
+          { "@type": "Person", "name": "이순신" },
+          { "@type": "Person", "name": "강감찬" }
+        ],
+        "datePublished": "2026-06-15",
+        "publisher": {
+          "@type": "Organization",
+          "name": "대한학술원"
+        },
+        "isPartOf": {
+          "@type": "Periodical",
+          "name": "구조화데이터학보"
+        },
+        "pageStart": "150",
+        "pageEnd": "180"
+      }
+      </script>
+    </head>
+    <body>
+      <p>Content</p>
+    </body>
+    </html>
+  `;
+  const actual = metadata.parseFixtureHtml(html, "https://blog.example.com/ld-json-post");
+  
+  assert.equal(actual.source, "unknown");
+  assert.equal(actual.titleMain, "JSON-LD 기반의 구조화된 서지 정보 추출법");
+  assert.deepEqual(actual.authors, ["이순신", "강감찬"]);
+  assert.equal(actual.publisher, "대한학술원");
+  assert.equal(actual.journalName, "구조화데이터학보");
+  assert.equal(actual.year, "2026");
+  assert.equal(actual.pageFirst, "150");
+  assert.equal(actual.pageLast, "180");
+});
+
+test("hasUsefulMetadata returns true with single field present", () => {
+  const hasUsefulMetadata = (meta) => {
+    if (!meta) return false;
+    const authors = Array.isArray(meta.authors) ? meta.authors : [];
+    return Boolean(
+      meta.titleMain ||
+      authors.length ||
+      meta.journalName ||
+      meta.publisher ||
+      meta.year ||
+      meta.pageFirst
+    );
+  };
+  
+  assert.ok(hasUsefulMetadata({ titleMain: "제목만 존재" }));
+  assert.ok(hasUsefulMetadata({ authors: ["저자만 존재"] }));
+  assert.ok(hasUsefulMetadata({ year: "2026" }));
+  assert.ok(!hasUsefulMetadata({}));
+});
+
+test("isAcademicSite accurately filters domestic academic URLs", () => {
+  assert.ok(constants.isAcademicSite("https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE00832805"));
+  assert.ok(constants.isAcademicSite("https://dbpia-co-kr-ssl.openlib.uos.ac.kr/journal/articleDetail?nodeId=NODE00832805"));
+  assert.ok(constants.isAcademicSite("https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1"));
+  assert.ok(constants.isAcademicSite("https://scholar.google.co.kr/scholar?hl=ko&q=test"));
+  assert.ok(constants.isAcademicSite("https://dcollection.uos.ac.kr/jsp/common/DcResultDownload.jsp?id=123"));
+  
+  // Non-academic sites should return false
+  assert.ok(!constants.isAcademicSite("https://www.naver.com/"));
+  assert.ok(!constants.isAcademicSite("https://news.naver.com/main/read.nhn?mode=LSD&mid=shm&sid1=105&oid=001&aid=00000001"));
+  assert.ok(!constants.isAcademicSite("https://www.google.com/search?q=test"));
+});
+
+test("default settings has includePages as false", () => {
+  const settings = filename.safeSettings();
+  assert.equal(settings.includePages, false);
+});
+
+test("default template does not end with pages field", () => {
+  const lastToken = filename.DEFAULT_TEMPLATE[filename.DEFAULT_TEMPLATE.length - 1];
+  assert.notEqual(lastToken.value, "pages");
 });
 
 module.exports = Promise.all(pendingTests);

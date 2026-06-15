@@ -37,15 +37,43 @@
   };
 
   const CONTEXT_TTL_MS = 8 * 60 * 1000;
+  // 다운로드 직전 클릭 컨텍스트를 최근으로 간주하는 윈도우 (2분)
+  const RECENT_CONTEXT_WINDOW_MS = 2 * 60 * 1000;
+  // RISS 상세 페이지 보강을 기다리는 최대 딜레이
+  const CONTEXT_SETTLE_DELAY_MS = 800;
   const MAX_CONTEXTS = 30;
+
+  // 파일명 최대 길이 기본값 / 허용 범위
+  const MAX_FILENAME_LENGTH_DEFAULT = 180;
+  const MAX_FILENAME_LENGTH_MIN = 40;
+  const MAX_FILENAME_LENGTH_MAX = 240;
+
+  function isAcademicSite(url) {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      const path = parsed.pathname;
+      const academicPattern = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection/i;
+      return academicPattern.test(host) || academicPattern.test(path);
+    } catch (_e) {
+      return false;
+    }
+  }
 
   const api = {
     ACTION,
     APP_TITLE,
+    CONTEXT_SETTLE_DELAY_MS,
     CONTEXT_TTL_MS,
     DEFAULT_SETTINGS,
+    isAcademicSite,
     MAX_CONTEXTS,
+    MAX_FILENAME_LENGTH_DEFAULT,
+    MAX_FILENAME_LENGTH_MIN,
+    MAX_FILENAME_LENGTH_MAX,
     MESSAGES,
+    RECENT_CONTEXT_WINDOW_MS,
     SETTINGS_STORAGE_KEY,
     SOURCES
   };

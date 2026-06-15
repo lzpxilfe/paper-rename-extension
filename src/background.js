@@ -12,7 +12,6 @@ const filenameModule = globalThis.PaperRenameFilename;
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
-const CONTEXT_SETTLE_DELAY_MS = 800;
 
 function hasChromeApi(path) {
   let current = typeof chrome !== "undefined" ? chrome : null;
@@ -72,7 +71,14 @@ function hasContextMetadata(context) {
     return false;
   }
   const authors = Array.isArray(metadata.authors) ? metadata.authors : [];
-  return Boolean(metadata.titleMain && (authors.length || metadata.journalName || metadata.publisher || metadata.year));
+  return Boolean(
+    metadata.titleMain ||
+    authors.length ||
+    metadata.journalName ||
+    metadata.publisher ||
+    metadata.year ||
+    metadata.pageFirst
+  );
 }
 
 function persistContexts() {
@@ -134,7 +140,7 @@ function sameKnownPaperHost(left, right) {
     /riss/i,
     /kci\.go\.kr$/i,
     /kiss\.kstudy\.com$/i,
-    /dbpia\.com$/i,
+    /dbpia\.(?:com|co\.kr)$/i,
     /earticle\.net$/i,
     /scholar.*kyobobook/i,
     /koreascience\.or\.kr$/i,
@@ -155,6 +161,36 @@ function isLikelyViewerDownload(downloadItem) {
   return /(?:viewer|view|download|down|file|pdf|riss|kci|원문|다운로드)/i.test(text);
 }
 
+function extractPaperId(urlText) {
+  if (!urlText) {
+    return "";
+  }
+  try {
+    const parsed = new URL(urlText);
+    const keys = ["cn", "artiId", "key", "nodeId", "p_mat_type", "artId", "articleId"];
+    for (const key of keys) {
+      const val = parsed.searchParams.get(key);
+      if (val) {
+        return `${key}:${val}`;
+      }
+    }
+    const earticleMatch = parsed.pathname.match(/\/Article\/([A-Za-z0-9]+)/i);
+    if (earticleMatch) {
+      return `earticle:${earticleMatch[1]}`;
+    }
+    const scholarMatch = parsed.pathname.match(/\/article\/detail\/([A-Za-z0-9]+)/i);
+    if (scholarMatch) {
+      return `scholar:${scholarMatch[1]}`;
+    }
+  } catch (_error) {
+    const match = urlText.match(/(?:cn|artiId|key|nodeId|p_mat_type)=([A-Za-z0-9_-]+)/i);
+    if (match) {
+      return match[1];
+    }
+  }
+  return "";
+}
+
 function contextScore(entry, downloadItem, now) {
   if (!entry || !entry.context || !downloadItem) {
     return 0;
@@ -167,6 +203,12 @@ function contextScore(entry, downloadItem, now) {
   const originalFilename = normalizeUrl(context.originalFilename || (context.metadata && context.metadata.originalFilename) || "");
   const itemFilename = normalizeUrl(downloadItem.filename || "");
   let score = 0;
+
+  const itemId = extractPaperId(itemUrl) || extractPaperId(itemReferrer);
+  const contextId = extractPaperId(pageUrl) || extractPaperId(contextUrl);
+  if (itemId && contextId && itemId === contextId) {
+    score += 12;
+  }
 
   if (Number.isInteger(downloadItem.tabId) && downloadItem.tabId >= 0 && entry.tabId === downloadItem.tabId) {
     score += 8;
@@ -216,7 +258,7 @@ function selectContextEntry(downloadItem, nowValue) {
   if ((!best || best.score < 4) && pendingContexts.length === 1) {
     const only = pendingContexts[0];
     const age = contextAge(only, now);
-    if (age >= 0 && age < 2 * 60 * 1000 && only.context.metadata && only.context.metadata.titleMain) {
+    if (age >= 0 && age < constants.RECENT_CONTEXT_WINDOW_MS && only.context.metadata && only.context.metadata.titleMain) {
       best = { entry: only, score: best ? best.score : 0 };
     }
   }
@@ -224,7 +266,7 @@ function selectContextEntry(downloadItem, nowValue) {
     const recent = pendingContexts
       .filter((entry) => {
         const age = contextAge(entry, now);
-        return age >= 0 && age < 2 * 60 * 1000 && entry.context.metadata && entry.context.metadata.titleMain;
+        return age >= 0 && age < constants.RECENT_CONTEXT_WINDOW_MS && entry.context.metadata && entry.context.metadata.titleMain;
       })
       .sort((left, right) => right.context.capturedAt - left.context.capturedAt)[0];
     if (recent) {
@@ -292,7 +334,7 @@ function findContextEntry(downloadItem, callback) {
   const now = Date.now();
   const first = selectContextEntry(downloadItem, now);
   if (shouldWaitForRissEnrichment(first, downloadItem, now)) {
-    setTimeout(() => chooseAfterRestore(downloadItem, callback), CONTEXT_SETTLE_DELAY_MS);
+    setTimeout(() => chooseAfterRestore(downloadItem, callback), constants.CONTEXT_SETTLE_DELAY_MS);
     return;
   }
   chooseAfterRestore(downloadItem, callback);

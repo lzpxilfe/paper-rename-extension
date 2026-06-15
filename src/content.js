@@ -5,6 +5,17 @@
   const metadataModule = globalThis.PaperRenameMetadata;
   const filenameModule = globalThis.PaperRenameFilename;
 
+  const titleText = (document.title || "").toLowerCase();
+  const isViewerPage = /viewer/i.test(location.hostname) || 
+                       /viewer/i.test(location.pathname) || 
+                       /originalView/i.test(location.pathname) ||
+                       /popOriginal/i.test(location.pathname) ||
+                       /viewOriginal/i.test(location.pathname) ||
+                       /원문보기|원문\s*보기|original\s*view/i.test(titleText);
+  const isLoginPage = /login|signin|oauth|session|authorize|register/i.test(location.href) || 
+                      /^(로그인|인증|login|signin)$/i.test(titleText) ||
+                      /(?:로그인\s*페이지|도서관\s*로그인|library\s*login)/i.test(titleText) ||
+                      (document.querySelector && document.querySelector('input[type="password"]') !== null);
   if (!constants || !metadataModule || !filenameModule) {
     return;
   }
@@ -13,6 +24,9 @@
   const DOWNLOAD_SOURCE_PATTERN = /(?:pdf|download|down|file|fulltext|original|원문|다운로드|fnFile|fileDown|downloadFile)/i;
 
   let lastMetadata = null;
+  // 한 번의 클릭에서 pointerdown → click 순으로 두 번 발화하는 문제를 주방하는 debounce 간격
+  const CONTEXT_SEND_DEBOUNCE_MS = 300;
+  let lastContextSentAt = 0;
 
   const DOWNLOAD_TEXT_PATTERN_EXTRA = /(?:\uc6d0\ubb38|\ubcf8\ubb38|\ub2e4\uc6b4\ub85c\ub4dc|\ub0b4\ub824\ubc1b\uae30|\ud30c\uc77c)/i;
   const DOWNLOAD_SOURCE_PATTERN_EXTRA = /(?:viewer|view|\uc6d0\ubb38|\ubcf8\ubb38|\ub2e4\uc6b4\ub85c\ub4dc|\ub0b4\ub824\ubc1b\uae30|\ud30c\uc77c)/i;
@@ -152,8 +166,30 @@
 
   function getCurrentMetadata() {
     try {
-      const extracted = metadataModule.extractFromDocument(document, location.href);
-      if (extracted && (extracted.titleMain || extracted.authors.length || extracted.journalName)) {
+      let docToExtract = document;
+      let urlToExtract = location.href;
+
+      if (isViewerPage && window.opener) {
+        try {
+          if (window.opener.document && window.opener.document.title) {
+            docToExtract = window.opener.document;
+            urlToExtract = window.opener.location.href;
+          }
+        } catch (_error) {
+          // Ignore cross-origin error
+        }
+      }
+
+      const extracted = metadataModule.extractFromDocument(docToExtract, urlToExtract);
+      const isExtractedValid = extracted && (
+        extracted.titleMain ||
+        extracted.authors.length ||
+        extracted.journalName ||
+        extracted.publisher ||
+        extracted.year ||
+        extracted.pageFirst
+      );
+      if (isExtractedValid) {
         lastMetadata = extracted;
       }
     } catch (error) {
@@ -169,7 +205,14 @@
       return false;
     }
     const authors = Array.isArray(metadata.authors) ? metadata.authors : [];
-    return Boolean(metadata.titleMain && (authors.length || metadata.journalName || metadata.publisher || metadata.year));
+    return Boolean(
+      metadata.titleMain ||
+      authors.length ||
+      metadata.journalName ||
+      metadata.publisher ||
+      metadata.year ||
+      metadata.pageFirst
+    );
   }
 
   function isRissSearchPage(metadata) {
@@ -312,6 +355,12 @@
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
       return;
     }
+    // debounce: pointerdown → click 연속 발화 시 중복 전송 방지
+    const now = Date.now();
+    if (now - lastContextSentAt < CONTEXT_SEND_DEBOUNCE_MS) {
+      return;
+    }
+    lastContextSentAt = now;
     const downloadUrl = downloadUrlFromControl(control);
     const container = nearbyContainer(control);
     const metadata = metadataFromControl(control, container);
@@ -366,10 +415,28 @@
   });
 
   document.addEventListener("pointerdown", handlePossibleDownload, true);
-  document.addEventListener("mousedown", handlePossibleDownload, true);
   document.addEventListener("click", handlePossibleDownload, true);
   document.addEventListener("change", handlePossibleDownload, true);
   document.addEventListener("keydown", handleKeyboard, true);
 
+  function sendInitialContext() {
+    if (isViewerPage || isLoginPage) {
+      return;
+    }
+    const metadata = getCurrentMetadata();
+    if (hasUsefulMetadata(metadata) && !isRissSearchPage(metadata) && !/search|srch/i.test(location.pathname)) {
+      const context = {
+        metadata,
+        pageUrl: location.href,
+        downloadUrl: "",
+        originalFilename: "",
+        source: metadata.source,
+        capturedAt: Date.now()
+      };
+      sendContext(context);
+    }
+  }
+
   getCurrentMetadata();
+  setTimeout(sendInitialContext, 500);
 })();

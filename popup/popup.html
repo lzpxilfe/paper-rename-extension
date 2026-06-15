@@ -24,36 +24,148 @@
       </label>
     </header>
 
+    <div id="academic-warning" class="academic-warning-banner" style="display: none;">
+      ⚠️ 이 페이지는 학술 사이트가 아닙니다. 정보가 추출되지 않으므로 필요 시 수동으로 입력해 주세요.
+    </div>
+
+    <div class="tabs">
+      <button type="button" class="tab-btn active" data-tab="settings-tab">⚙️ 설정</button>
+      <button type="button" class="tab-btn" data-tab="meta-tab">📑 서지정보</button>
+    </div>
+
     <section class="preview-panel">
       <label for="preview-output">미리보기</label>
       <output id="preview-output"></output>
     </section>
 
-    <section class="recipe-panel">
-      <div class="section-head">
-        <h2>현재 순서</h2>
-        <button type="button" id="reset-template">기본값</button>
+    <div id="settings-tab" class="tab-content active">
+      <section class="preset-panel">
+        <div class="preset-head">
+          <label for="preset-select">포맷 프리셋</label>
+          <select id="preset-select">
+            <option value="custom">-- 사용자 정의 --</option>
+            <option value="default">기본 확장 양식 (저자, 연도, 제목...)</option>
+            <option value="academic">표준 학술지 양식 (저자, 제목... 연도)</option>
+            <option value="year-first">연도 우선 정렬 (연도_저자_제목)</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="recipe-panel">
+        <div class="section-head">
+          <h2>현재 순서</h2>
+          <button type="button" id="reset-template">기본값</button>
+        </div>
+        <div id="recipe-list" class="recipe-list" aria-label="현재 파일명 순서"></div>
+      </section>
+
+      <section class="palette-panel">
+        <h2>항목</h2>
+        <div id="field-palette" class="palette-grid"></div>
+        <h2>구분</h2>
+        <div id="separator-palette" class="palette-grid compact"></div>
+      </section>
+
+      <section class="settings-row">
+        <label class="checkbox-row">
+          <input id="include-pages" type="checkbox">
+          <span>쪽수 포함</span>
+        </label>
+        <label class="length-row">
+          <span>최대 길이</span>
+          <input id="max-length" type="number" min="80" max="240" step="10">
+        </label>
+      </section>
+    </div>
+
+    <div id="meta-tab" class="tab-content">
+      <div class="meta-container">
+        <div class="meta-fields">
+          <div class="meta-row">
+            <label for="meta-authors">저자</label>
+            <div class="input-group">
+              <input id="meta-authors" type="text" placeholder="저자1, 저자2">
+              <button type="button" class="copy-btn" data-target="meta-authors">복사</button>
+            </div>
+          </div>
+          <div class="meta-row">
+            <label for="meta-title-main">본제목</label>
+            <div class="input-group">
+              <input id="meta-title-main" type="text" placeholder="본제목">
+              <button type="button" class="copy-btn" data-target="meta-title-main">복사</button>
+            </div>
+          </div>
+          <div class="meta-row">
+            <label for="meta-title-sub">부제목</label>
+            <div class="input-group">
+              <input id="meta-title-sub" type="text" placeholder="부제목">
+              <button type="button" class="copy-btn" data-target="meta-title-sub">복사</button>
+            </div>
+          </div>
+          <div class="meta-row">
+            <label for="meta-journal">학술지명</label>
+            <div class="input-group">
+              <input id="meta-journal" type="text" placeholder="학술지명">
+              <button type="button" class="copy-btn" data-target="meta-journal">복사</button>
+            </div>
+          </div>
+          <div class="meta-row-group">
+            <div class="meta-row compact">
+              <label for="meta-volume">권</label>
+              <div class="input-group">
+                <input id="meta-volume" type="text" placeholder="권">
+                <button type="button" class="copy-btn" data-target="meta-volume">복사</button>
+              </div>
+            </div>
+            <div class="meta-row compact">
+              <label for="meta-issue">호</label>
+              <div class="input-group">
+                <input id="meta-issue" type="text" placeholder="호">
+                <button type="button" class="copy-btn" data-target="meta-issue">복사</button>
+              </div>
+            </div>
+          </div>
+          <div class="meta-row">
+            <label for="meta-publisher">발행기관</label>
+            <div class="input-group">
+              <input id="meta-publisher" type="text" placeholder="발행기관">
+              <button type="button" class="copy-btn" data-target="meta-publisher">복사</button>
+            </div>
+          </div>
+          <div class="meta-row">
+            <label for="meta-year">발행연도</label>
+            <div class="input-group">
+              <input id="meta-year" type="text" placeholder="발행연도">
+              <button type="button" class="copy-btn" data-target="meta-year">복사</button>
+            </div>
+          </div>
+          <div class="meta-row-group">
+            <div class="meta-row compact">
+              <label for="meta-page-first">시작 쪽</label>
+              <div class="input-group">
+                <input id="meta-page-first" type="text" placeholder="시작">
+                <button type="button" class="copy-btn" data-target="meta-page-first">복사</button>
+              </div>
+            </div>
+            <div class="meta-row compact">
+              <label for="meta-page-last">끝 쪽</label>
+              <div class="input-group">
+                <input id="meta-page-last" type="text" placeholder="끝">
+                <button type="button" class="copy-btn" data-target="meta-page-last">복사</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="citation-box">
+          <label for="citation-output">조합된 인용 표기</label>
+          <div class="citation-output-group">
+            <textarea id="citation-output" readonly placeholder="인용 표기"></textarea>
+            <button type="button" id="copy-citation">인용 표기 복사</button>
+          </div>
+        </div>
       </div>
-      <div id="recipe-list" class="recipe-list" aria-label="현재 파일명 순서"></div>
-    </section>
-
-    <section class="palette-panel">
-      <h2>항목</h2>
-      <div id="field-palette" class="palette-grid"></div>
-      <h2>구분</h2>
-      <div id="separator-palette" class="palette-grid compact"></div>
-    </section>
-
-    <section class="settings-row">
-      <label class="checkbox-row">
-        <input id="include-pages" type="checkbox">
-        <span>쪽수 포함</span>
-      </label>
-      <label class="length-row">
-        <span>최대 길이</span>
-        <input id="max-length" type="number" min="80" max="240" step="10">
-      </label>
-    </section>
+    </div>
 
     <footer>
       <span id="save-status" role="status">저장됨</span>

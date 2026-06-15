@@ -53,6 +53,77 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  const PRESETS = {
+    default: {
+      template: [
+        { kind: "field", value: "authors" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "year" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "title" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "journal" },
+        { kind: "separator", value: "space" },
+        { kind: "field", value: "volumeIssue" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "publisher" }
+      ],
+      includePages: false
+    },
+    academic: {
+      template: [
+        { kind: "field", value: "authors" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "title" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "journal" },
+        { kind: "separator", value: "space" },
+        { kind: "field", value: "volumeIssue" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "publisher" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "year" }
+      ],
+      includePages: false
+    },
+    "year-first": {
+      template: [
+        { kind: "field", value: "year" },
+        { kind: "separator", value: "underscore" },
+        { kind: "field", value: "authors" },
+        { kind: "separator", value: "underscore" },
+        { kind: "field", value: "title" }
+      ],
+      includePages: false
+    }
+  };
+
+  function isSameTemplate(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((token, index) => {
+      const other = right[index];
+      return token &&
+        other &&
+        token.kind === other.kind &&
+        token.value === other.value &&
+        String(token.text || "") === String(other.text || "");
+    });
+  }
+
+  function syncPresetSelect() {
+    if (!els.presetSelect) return;
+    let found = "custom";
+    for (const [key, preset] of Object.entries(PRESETS)) {
+      if (isSameTemplate(settings.template, preset.template) && settings.includePages === preset.includePages) {
+        found = key;
+        break;
+      }
+    }
+    els.presetSelect.value = found;
+  }
+
   function tokenLabel(token) {
     if (token.kind === "field") {
       return filename.FIELD_LABELS[token.value] || token.value;
@@ -72,6 +143,7 @@
   function save() {
     settings = filename.safeSettings(settings);
     updatePreview();
+    syncPresetSelect();
     if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.sync) {
       return;
     }
@@ -90,6 +162,150 @@
 
   function updatePreview() {
     els.previewOutput.value = filename.renderFilename(currentMetadata, settings, { filename: "article.pdf" });
+    updateCitation();
+  }
+
+  function updateCitation() {
+    const citationModule = globalThis.PaperRenameCitation;
+    if (!citationModule || !els.citationOutput) {
+      return;
+    }
+    els.citationOutput.value = citationModule.renderFullCitation(currentMetadata, settings);
+  }
+
+  function syncMetaInputs() {
+    if (!els.metaInputs) {
+      return;
+    }
+    const authorsVal = (currentMetadata.authors || []).join(", ");
+    els.metaInputs.authors.value = authorsVal;
+    els.metaInputs.authors.title = authorsVal;
+
+    const titleMainVal = currentMetadata.titleMain || "";
+    els.metaInputs.titleMain.value = titleMainVal;
+    els.metaInputs.titleMain.title = titleMainVal;
+
+    const titleSubVal = currentMetadata.titleSub || "";
+    els.metaInputs.titleSub.value = titleSubVal;
+    els.metaInputs.titleSub.title = titleSubVal;
+
+    const journalVal = currentMetadata.journalName || "";
+    els.metaInputs.journal.value = journalVal;
+    els.metaInputs.journal.title = journalVal;
+
+    const volumeVal = currentMetadata.volume || "";
+    els.metaInputs.volume.value = volumeVal;
+    els.metaInputs.volume.title = volumeVal;
+
+    const issueVal = currentMetadata.issue || "";
+    els.metaInputs.issue.value = issueVal;
+    els.metaInputs.issue.title = issueVal;
+
+    const publisherVal = currentMetadata.publisher || "";
+    els.metaInputs.publisher.value = publisherVal;
+    els.metaInputs.publisher.title = publisherVal;
+
+    const yearVal = currentMetadata.year || "";
+    els.metaInputs.year.value = yearVal;
+    els.metaInputs.year.title = yearVal;
+
+    const pageFirstVal = currentMetadata.pageFirst || "";
+    els.metaInputs.pageFirst.value = pageFirstVal;
+    els.metaInputs.pageFirst.title = pageFirstVal;
+
+    const pageLastVal = currentMetadata.pageLast || "";
+    els.metaInputs.pageLast.value = pageLastVal;
+    els.metaInputs.pageLast.title = pageLastVal;
+
+    updateCitation();
+  }
+
+  function bindMetaInputs() {
+    const bindInput = (id, key, isAuthors = false) => {
+      const el = document.getElementById(id);
+      if (!el) {
+        return;
+      }
+      el.addEventListener("input", () => {
+        const value = el.value;
+        el.title = value;
+        if (isAuthors) {
+          currentMetadata.authors = value.split(/[,;；]/).map((x) => x.trim()).filter(Boolean);
+        } else {
+          currentMetadata[key] = value;
+        }
+        updatePreview();
+      });
+      el.addEventListener("focus", () => {
+        el.select();
+      });
+    };
+
+    bindInput("meta-authors", "authors", true);
+    bindInput("meta-title-main", "titleMain");
+    bindInput("meta-title-sub", "titleSub");
+    bindInput("meta-journal", "journalName");
+    bindInput("meta-volume", "volume");
+    bindInput("meta-issue", "issue");
+    bindInput("meta-publisher", "publisher");
+    bindInput("meta-year", "year");
+    bindInput("meta-page-first", "pageFirst");
+    bindInput("meta-page-last", "pageLast");
+  }
+
+  function bindTabs() {
+    const tabBtns = document.querySelectorAll(".tab-btn");
+    const tabContents = document.querySelectorAll(".tab-content");
+    tabBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = btn.dataset.tab;
+        tabBtns.forEach((b) => b.classList.remove("active"));
+        tabContents.forEach((c) => c.classList.remove("active"));
+        btn.classList.add("active");
+        const targetEl = document.getElementById(target);
+        if (targetEl) {
+          targetEl.classList.add("active");
+        }
+      });
+    });
+  }
+
+  function bindCopyButtons() {
+    const copyToClipboard = (text, button) => {
+      if (!text) {
+        return;
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        const originalText = button.textContent;
+        button.textContent = button.classList.contains("copy-btn") ? "복사됨!" : "인용 표기 복사됨!";
+        button.classList.add("copied");
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.classList.remove("copied");
+        }, 1500);
+      }).catch((err) => {
+        console.error("클립보드 복사 실패", err);
+      });
+    };
+
+    document.querySelectorAll(".copy-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetId = btn.dataset.target;
+        const targetInput = document.getElementById(targetId);
+        if (targetInput) {
+          copyToClipboard(targetInput.value, btn);
+        }
+      });
+    });
+
+    const copyCitationBtn = document.getElementById("copy-citation");
+    if (copyCitationBtn) {
+      copyCitationBtn.addEventListener("click", () => {
+        if (els.citationOutput) {
+          copyToClipboard(els.citationOutput.value, copyCitationBtn);
+        }
+      });
+    }
   }
 
   function clearMarker() {
@@ -263,13 +479,40 @@
       if (!tab || !tab.id || !chrome.tabs.sendMessage) {
         return;
       }
+      const tabUrl = tab.url || "";
+      const isAcademic = constants.isAcademicSite(tabUrl);
+      if (els.academicWarning) {
+        els.academicWarning.style.display = isAcademic ? "none" : "flex";
+      }
+
       chrome.tabs.sendMessage(tab.id, { type: constants.MESSAGES.GET_PAGE_INFO }, (response) => {
-        if (chrome.runtime.lastError || !response || !response.success || !response.metadata) {
+        if (chrome.runtime.lastError || !response || !response.success || !response.metadata || !isAcademic) {
+          if (!isAcademic) {
+            currentMetadata = {
+              authors: [],
+              titleMain: "",
+              titleSub: "",
+              journalName: "",
+              volume: "",
+              issue: "",
+              publisher: "",
+              year: "",
+              pageFirst: "",
+              pageLast: "",
+              originalFilename: "",
+              source: "unknown",
+              pageUrl: tabUrl
+            };
+            els.pageSource.textContent = "수동 입력 (비학술 페이지)";
+            updatePreview();
+            syncMetaInputs();
+          }
           return;
         }
         currentMetadata = response.metadata;
         els.pageSource.textContent = response.metadata.source || "현재 페이지";
         updatePreview();
+        syncMetaInputs();
       });
     });
   }
@@ -280,6 +523,8 @@
       syncStaticInputs();
       renderRecipe();
       updateEnabledUi();
+      syncMetaInputs();
+      syncPresetSelect();
       return;
     }
     chrome.storage.sync.get(constants.SETTINGS_STORAGE_KEY, (result) => {
@@ -287,7 +532,9 @@
       syncStaticInputs();
       renderRecipe();
       updateEnabledUi();
+      syncMetaInputs();
       loadActiveTabMetadata();
+      syncPresetSelect();
     });
   }
 
@@ -310,16 +557,32 @@
       renderRecipe();
       save();
     });
+    if (els.presetSelect) {
+      els.presetSelect.addEventListener("change", () => {
+        const val = els.presetSelect.value;
+        if (val === "custom") return;
+        const preset = PRESETS[val];
+        if (preset) {
+          settings.template = clone(preset.template);
+          settings.includePages = preset.includePages;
+          syncStaticInputs();
+          renderRecipe();
+          save();
+        }
+      });
+    }
   }
 
   function syncStaticInputs() {
-    els.includePages.checked = settings.includePages !== false;
+    els.includePages.checked = Boolean(settings.includePages);
     els.maxLength.value = String(settings.maxFilenameLength || 180);
   }
 
   function init() {
     els.enabledToggle = document.getElementById("enabled-toggle");
     els.enabledLabel = document.getElementById("enabled-label");
+    els.academicWarning = document.getElementById("academic-warning");
+    els.presetSelect = document.getElementById("preset-select");
     els.pageSource = document.getElementById("page-source");
     els.previewOutput = document.getElementById("preview-output");
     els.recipeList = document.getElementById("recipe-list");
@@ -330,10 +593,28 @@
     els.resetTemplate = document.getElementById("reset-template");
     els.status = document.getElementById("save-status");
 
+    els.citationOutput = document.getElementById("citation-output");
+    els.metaInputs = {
+      authors: document.getElementById("meta-authors"),
+      titleMain: document.getElementById("meta-title-main"),
+      titleSub: document.getElementById("meta-title-sub"),
+      journal: document.getElementById("meta-journal"),
+      volume: document.getElementById("meta-volume"),
+      issue: document.getElementById("meta-issue"),
+      publisher: document.getElementById("meta-publisher"),
+      year: document.getElementById("meta-year"),
+      pageFirst: document.getElementById("meta-page-first"),
+      pageLast: document.getElementById("meta-page-last")
+    };
+
     renderPalette(els.fieldPalette, fieldPalette);
     renderPalette(els.separatorPalette, separatorPalette);
     bindRecipeDrop();
     bindControls();
+    bindMetaInputs();
+    bindTabs();
+    bindCopyButtons();
+
     loadSettings();
     updatePreview();
   }

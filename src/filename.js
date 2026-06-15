@@ -39,6 +39,8 @@
     { kind: "field", value: "publisher" }
   ];
 
+  // 구 기본 템플릿 — v0.1 이전에 저장된 설정을 새 기본값으로 자동 업그레이드하기 위해 보존
+  // 사용자가 이 순서를 저장했으면 DEFAULT_TEMPLATE으로 교체한다
   const OLD_DEFAULT_TEMPLATE = [
     { kind: "field", value: "authors" },
     { kind: "separator", value: "commaSpace" },
@@ -126,10 +128,14 @@
         .filter((token) => token && (token.kind === "field" || token.kind === "separator"))
         .map((token) => Object.assign({}, token));
     }
-    if (!Number.isFinite(Number(merged.maxFilenameLength)) || Number(merged.maxFilenameLength) < 40) {
-      merged.maxFilenameLength = 180;
+    const maxLen = Number(merged.maxFilenameLength);
+    const minLen = constants.MAX_FILENAME_LENGTH_MIN || 40;
+    const maxLenCap = constants.MAX_FILENAME_LENGTH_MAX || 240;
+    const defaultLen = constants.MAX_FILENAME_LENGTH_DEFAULT || 180;
+    if (!Number.isFinite(maxLen) || maxLen < minLen) {
+      merged.maxFilenameLength = defaultLen;
     } else {
-      merged.maxFilenameLength = Math.min(240, Math.max(40, Math.floor(Number(merged.maxFilenameLength))));
+      merged.maxFilenameLength = Math.min(maxLenCap, Math.max(minLen, Math.floor(maxLen)));
     }
     return merged;
   }
@@ -207,11 +213,10 @@
       extensionFromFilename(downloadItem && (downloadItem.finalUrl || downloadItem.url)) ||
       ".pdf";
     const maxBaseLength = Math.max(1, activeSettings.maxFilenameLength - extension.length);
+    // renderTemplate 내부에서 이미 빈 결과일 때 renderFullCitation 폴백을 수행하므로
+    // 여기서 별도로 fallback 계산을 반복하지 않는다
     const rendered = renderTemplate(Object.assign({}, source, { originalFilename }), activeSettings);
-    const fallback = citation.renderFullCitation
-      ? citation.renderFullCitation(source, activeSettings)
-      : originalFilename;
-    const base = sanitizeFilenameBase(rendered || fallback || originalFilename || "paper", maxBaseLength);
+    const base = sanitizeFilenameBase(rendered || originalFilename || "paper", maxBaseLength);
     return `${base || "paper"}${extension}`;
   }
 

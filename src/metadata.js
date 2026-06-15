@@ -57,7 +57,8 @@
       while (index >= 0) {
         const insideBrackets = ranges.some(([start, end]) => index > start && index < end);
         const numberHyphen = delimiter === "-" && /\d/.test(raw.charAt(index - 1)) && /\d/.test(raw.charAt(index + 1));
-        if (!insideBrackets && !numberHyphen) {
+        const wordHyphen = delimiter === "-" && /[A-Za-z0-9가-힣]/.test(raw.charAt(index - 1)) && /[A-Za-z0-9가-힣]/.test(raw.charAt(index + 1));
+        if (!insideBrackets && !numberHyphen && !wordHyphen) {
           const main = normalizeSpaces(raw.slice(0, index));
           const sub = normalizeSpaces(raw.slice(index + delimiter.length).replace(/^[\s\-–—]+|[\s\-–—]+$/g, ""));
           return { titleMain: main, titleSub: sub };
@@ -90,34 +91,27 @@
     const text = normalizeSpaces(value);
     let volume = "";
     let issue = "";
-    const safeVol = text.match(/vol\.?\s*([0-9A-Za-z\uac00-\ud7a3-]+)/i);
-    const safeNo = text.match(/no\.?\s*([0-9A-Za-z\uac00-\ud7a3-]+)/i);
-    const safeKorean = text.match(/(\d+)\s*\uad8c\s*(?:(\d+)\s*\ud638)?/);
-    const volNo = text.match(/Vol\.?\s*([0-9A-Za-z가-힣.-]+)/i);
-    const no = text.match(/No\.?\s*([0-9A-Za-z가-힣.-]+)/i);
-    const compact = text.match(/(\d+)\s*\(\s*(\d+)\s*\)/);
-    const koreanVolume = text.match(/(?:제\s*)?(\d+)\s*(?:권|집|호)/);
-    const koreanIssue = text.match(/(?:제\s*)?\d+\s*(?:권|집)\s*(?:제\s*)?(\d+)\s*호/);
+    // vol./no. 패턴 — 이전에 safeVol/volNo로 이중 정의되어 volNo가 safeVol을 덮어새는 버그가 있었음 — 하나로 통합
+    const matchVol     = text.match(/vol\.?\s*([0-9A-Za-z\uac00-\ud7a3.-]+)/i);
+    const matchNo      = text.match(/no\.?\s*([0-9A-Za-z\uac00-\ud7a3.-]+)/i);
+    const matchKorean  = text.match(/(\d+)\s*\uad8c\s*(?:(\d+)\s*\ud638)?/);
+    const compact      = text.match(/(\d+)\s*\(\s*(\d+)\s*\)/);
+    const koreanVolume = text.match(/(?:\uc81c\s*)?(\d+)\s*(?:\uad8c|\uc9d1|\ud638)/);
+    const koreanIssue  = text.match(/(?:\uc81c\s*)?\d+\s*(?:\uad8c|\uc9d1)\s*(?:\uc81c\s*)?(\d+)\s*\ud638/);
 
-    if (safeVol) {
-      volume = safeVol[1].replace(/[-,.;]+$/g, "");
+    if (matchVol) {
+      volume = matchVol[1].replace(/[-,.;]+$/g, "");
     }
-    if (safeNo) {
-      issue = safeNo[1].replace(/[-,.;]+$/g, "");
+    if (matchKorean) {
+      volume = volume || matchKorean[1];
+      issue  = issue  || matchKorean[2] || "";
     }
-    if (safeKorean) {
-      volume = volume || safeKorean[1];
-      issue = issue || safeKorean[2] || "";
-    }
-    if (volNo) {
-      volume = volNo[1].replace(/[-,.;]+$/g, "");
-    }
-    if (no && no[1] !== "-") {
-      issue = no[1].replace(/[-,.;]+$/g, "");
+    if (matchNo && matchNo[1] !== "-") {
+      issue = issue || matchNo[1].replace(/[-,.;]+$/g, "");
     }
     if (!volume && compact) {
       volume = compact[1];
-      issue = compact[2];
+      issue  = compact[2];
     }
     if (!volume && koreanVolume) {
       volume = koreanVolume[1];
@@ -227,6 +221,31 @@
     return null;
   }
 
+  function directTextAfter(element) {
+    if (!element) {
+      return "";
+    }
+    const parts = [];
+    let next = element.nextSibling;
+    while (next) {
+      if (next.nodeType === 3) { // TEXT_NODE
+        parts.push(next.nodeValue);
+      } else if (next.nodeType === 1) { // ELEMENT_NODE
+        const tagName = (next.tagName || "").toLowerCase();
+        if (/^(a|span|i|b|strong|em|font)$/.test(tagName)) {
+          parts.push(next.textContent || next.innerText || "");
+        } else {
+          break;
+        }
+      }
+      next = next.nextSibling;
+    }
+    return cleanValue(parts.join(" "));
+  }
+
+  // 한 필드 값의 합리적 최대 길이 — 이 이상이면 DOM 서브트리(연구분야·초록 등) 오염으로 간주해 건너뜀
+  const FACTS_MAX_VALUE_LENGTH = 100;
+
   function collectFactsFromDocument(doc) {
     const facts = {};
 
@@ -235,7 +254,7 @@
       if (cells.length >= 2) {
         const label = cleanLabel(textOf(cells[0]));
         const value = textOf(cells.slice(1).map(textOf).join(" "));
-        if (label && value && !facts[label]) {
+        if (label && value && value.length <= FACTS_MAX_VALUE_LENGTH && !facts[label]) {
           facts[label] = value;
         }
       }
@@ -244,7 +263,7 @@
     qAll(doc, "dt, th").forEach((labelElement) => {
       const label = cleanLabel(textOf(labelElement));
       const value = textOf(nextValueElement(labelElement));
-      if (label && value && !facts[label]) {
+      if (label && value && value.length <= FACTS_MAX_VALUE_LENGTH && !facts[label]) {
         facts[label] = value;
       }
     });
@@ -255,14 +274,21 @@
         return;
       }
       const label = cleanLabel(textOf(strong));
-      const value = cleanValue(textOf(item).replace(textOf(strong), ""));
-      if (label && value && !facts[label]) {
+      let value = directTextAfter(strong);
+      if (!value) {
+        const valueEl = nextValueElement(strong);
+        value = valueEl
+          ? cleanValue(textOf(valueEl))
+          : cleanValue(textOf(item).replace(textOf(strong), ""));
+      }
+      if (label && value && value.length <= FACTS_MAX_VALUE_LENGTH && !facts[label]) {
         facts[label] = value;
       }
     });
 
     return facts;
   }
+
 
   function valueByLabels(facts, labels) {
     for (const [label, value] of Object.entries(facts || {})) {
@@ -388,79 +414,501 @@
     return out;
   }
 
+  function parseGoogleScholarMetaTags(doc) {
+    const out = {};
+    const title = metaContent(doc, ["meta[name='citation_title']", "meta[property='citation_title']"]);
+    if (title && isUsableTitle(title)) {
+      Object.assign(out, splitTitle(title));
+    }
+    const authors = qAll(doc, "meta[name='citation_author'], meta[property='citation_author']")
+      .map((el) => cleanValue(el && el.getAttribute && el.getAttribute("content")))
+      .filter(Boolean);
+    if (authors.length) {
+      out.authors = splitAuthors(authors.join(";"));
+    }
+    const journal = metaContent(doc, ["meta[name='citation_journal_title']", "meta[property='citation_journal_title']"]);
+    if (journal) {
+      out.journalName = removeNonKoreanParen(journal);
+    }
+    const publisher = metaContent(doc, ["meta[name='citation_publisher']", "meta[property='citation_publisher']"]);
+    if (publisher) {
+      out.publisher = removeNonKoreanParen(publisher);
+    }
+    const date = metaContent(doc, ["meta[name='citation_publication_date']", "meta[property='citation_publication_date']", "meta[name='citation_date']"]);
+    if (date) {
+      const year = parseYear(date);
+      if (year) {
+        out.year = year;
+      }
+    }
+    const volume = metaContent(doc, ["meta[name='citation_volume']", "meta[property='citation_volume']"]);
+    if (volume) {
+      out.volume = volume;
+    }
+    const issue = metaContent(doc, ["meta[name='citation_issue']", "meta[property='citation_issue']"]);
+    if (issue) {
+      out.issue = issue;
+    }
+    const firstpage = metaContent(doc, ["meta[name='citation_firstpage']", "meta[property='citation_firstpage']"]);
+    if (firstpage) {
+      out.pageFirst = firstpage;
+    }
+    const lastpage = metaContent(doc, ["meta[name='citation_lastpage']", "meta[property='citation_lastpage']"]);
+    if (lastpage) {
+      out.pageLast = lastpage;
+    }
+    return out;
+  }
+
+  function parseGoogleScholarMetaTagsFromHtml(html) {
+    const out = {};
+    const title = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_title["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_title["']/i
+    ]);
+    if (title && isUsableTitle(title)) {
+      Object.assign(out, splitTitle(title));
+    }
+    const authorPattern = /<meta[^>]+(?:name|property)=["']citation_author["'][^>]+content=["']([^"']+)["']/gi;
+    const authorPatternAlt = /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_author["']/gi;
+    const authors = [];
+    let match;
+    while ((match = authorPattern.exec(html))) {
+      authors.push(cleanValue(match[1]));
+    }
+    authorPatternAlt.lastIndex = 0;
+    while ((match = authorPatternAlt.exec(html))) {
+      authors.push(cleanValue(match[1]));
+    }
+    if (authors.length) {
+      out.authors = splitAuthors(authors.join(";"));
+    }
+    const journal = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_journal_title["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_journal_title["']/i
+    ]);
+    if (journal) {
+      out.journalName = removeNonKoreanParen(journal);
+    }
+    const publisher = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_publisher["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_publisher["']/i
+    ]);
+    if (publisher) {
+      out.publisher = removeNonKoreanParen(publisher);
+    }
+    const date = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:citation_publication_date|citation_date)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:citation_publication_date|citation_date)["']/i
+    ]);
+    if (date) {
+      const year = parseYear(date);
+      if (year) {
+        out.year = year;
+      }
+    }
+    const volume = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_volume["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_volume["']/i
+    ]);
+    if (volume) {
+      out.volume = volume;
+    }
+    const issue = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_issue["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_issue["']/i
+    ]);
+    if (issue) {
+      out.issue = issue;
+    }
+    const firstpage = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_firstpage["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_firstpage["']/i
+    ]);
+    if (firstpage) {
+      out.pageFirst = firstpage;
+    }
+    const lastpage = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["']citation_lastpage["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']citation_lastpage["']/i
+    ]);
+    if (lastpage) {
+      out.pageLast = lastpage;
+    }
+    return out;
+  }
+
+  function extractFromJsonLdObject(obj) {
+    if (!obj) return null;
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        const res = extractFromJsonLdObject(item);
+        if (res && (res.titleMain || res.authors.length || res.journalName)) {
+          return res;
+        }
+      }
+      return null;
+    }
+    if (obj["@graph"] && Array.isArray(obj["@graph"])) {
+      return extractFromJsonLdObject(obj["@graph"]);
+    }
+
+    const out = {};
+    const headline = obj.headline || obj.name;
+    if (headline && typeof headline === "string" && isUsableTitle(headline)) {
+      Object.assign(out, splitTitle(headline));
+    }
+
+    const authors = [];
+    const rawAuthor = obj.author;
+    if (rawAuthor) {
+      const authorList = Array.isArray(rawAuthor) ? rawAuthor : [rawAuthor];
+      authorList.forEach((author) => {
+        if (typeof author === "string") {
+          authors.push(author);
+        } else if (author && typeof author === "object") {
+          if (typeof author.name === "string") {
+            authors.push(author.name);
+          } else if (Array.isArray(author.name)) {
+            author.name.forEach((n) => {
+              if (typeof n === "string") authors.push(n);
+            });
+          }
+        }
+      });
+    }
+    if (authors.length) {
+      out.authors = splitAuthors(authors.join(";"));
+    }
+
+    const date = obj.datePublished || obj.dateCreated || obj.dateModified;
+    if (date) {
+      const year = parseYear(String(date));
+      if (year) {
+        out.year = year;
+      }
+    }
+
+    const publisher = obj.publisher;
+    if (publisher) {
+      if (typeof publisher === "string") {
+        out.publisher = removeNonKoreanParen(publisher);
+      } else if (typeof publisher === "object" && publisher.name) {
+        out.publisher = removeNonKoreanParen(publisher.name);
+      }
+    }
+
+    const isPartOf = obj.isPartOf;
+    if (isPartOf) {
+      if (typeof isPartOf === "string") {
+        out.journalName = removeNonKoreanParen(isPartOf);
+      } else if (typeof isPartOf === "object") {
+        const partName = isPartOf.name || isPartOf.headline;
+        if (partName) {
+          out.journalName = removeNonKoreanParen(partName);
+        }
+      }
+    }
+
+    const pageStart = obj.pageStart;
+    const pageEnd = obj.pageEnd;
+    if (pageStart) {
+      out.pageFirst = String(pageStart).replace(/[^\d]/g, "");
+    }
+    if (pageEnd) {
+      out.pageLast = String(pageEnd).replace(/[^\d]/g, "");
+    }
+    const pagination = obj.pagination;
+    if (pagination && (!out.pageFirst || !out.pageLast)) {
+      const pages = parsePages(String(pagination));
+      if (pages.pageFirst) out.pageFirst = pages.pageFirst;
+      if (pages.pageLast) out.pageLast = pages.pageLast;
+    }
+
+    return out;
+  }
+
+  function parseJsonLd(doc) {
+    const scripts = qAll(doc, "script[type='application/ld+json']");
+    for (const script of scripts) {
+      try {
+        const text = script.textContent || script.innerText;
+        if (!text) continue;
+        const parsed = JSON.parse(text);
+        const meta = extractFromJsonLdObject(parsed);
+        if (meta && (meta.titleMain || meta.authors.length || meta.journalName || meta.year)) {
+          return meta;
+        }
+      } catch (_e) {
+        // ignore
+      }
+    }
+    return {};
+  }
+
+  function parseJsonLdFromHtml(html) {
+    const pattern = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+    let match;
+    while ((match = pattern.exec(html))) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        const meta = extractFromJsonLdObject(parsed);
+        if (meta && (meta.titleMain || meta.authors.length || meta.journalName || meta.year)) {
+          return meta;
+        }
+      } catch (_e) {
+        // ignore
+      }
+    }
+    return {};
+  }
+
+  function parseUniversalMetaTags(doc) {
+    const out = {};
+    const scholar = parseGoogleScholarMetaTags(doc);
+    Object.assign(out, scholar);
+
+    const dcTitle = metaContent(doc, ["meta[name='DC.title']", "meta[name='dc.title']", "meta[name='DC.Title']"]);
+    if (dcTitle && !out.titleMain) {
+      Object.assign(out, splitTitle(dcTitle));
+    }
+    const dcAuthors = qAll(doc, "meta[name='DC.creator'], meta[name='dc.creator'], meta[name='DC.Creator'], meta[name='DC.author'], meta[name='dc.author']")
+      .map((el) => cleanValue(el && el.getAttribute && el.getAttribute("content")))
+      .filter(Boolean);
+    if (dcAuthors.length && (!out.authors || out.authors.length === 0)) {
+      out.authors = splitAuthors(dcAuthors.join(";"));
+    }
+    const dcPublisher = metaContent(doc, ["meta[name='DC.publisher']", "meta[name='dc.publisher']", "meta[name='DC.Publisher']"]);
+    if (dcPublisher && !out.publisher) {
+      out.publisher = removeNonKoreanParen(dcPublisher);
+    }
+    const dcDate = metaContent(doc, ["meta[name='DC.date']", "meta[name='dc.date']", "meta[name='DC.Date']", "meta[name='DC.issued']", "meta[name='dc.issued']"]);
+    if (dcDate && !out.year) {
+      const year = parseYear(dcDate);
+      if (year) {
+        out.year = year;
+      }
+    }
+    const dcJournal = metaContent(doc, ["meta[name='DC.relation']", "meta[name='dc.relation']"]);
+    if (dcJournal && !out.journalName) {
+      out.journalName = removeNonKoreanParen(dcJournal);
+    }
+
+    const ogTitle = metaContent(doc, ["meta[property='og:title']", "meta[name='twitter:title']"]);
+    if (ogTitle && !out.titleMain && isUsableTitle(ogTitle)) {
+      Object.assign(out, splitTitle(ogTitle));
+    }
+    const ogSiteName = metaContent(doc, ["meta[property='og:site_name']", "meta[name='citation_journal_title']"]);
+    if (ogSiteName && !out.journalName) {
+      out.journalName = removeNonKoreanParen(ogSiteName);
+    }
+    const ogPublisher = metaContent(doc, ["meta[property='article:publisher']", "meta[property='og:publisher']"]);
+    if (ogPublisher && !out.publisher) {
+      out.publisher = removeNonKoreanParen(ogPublisher);
+    }
+    const ogAuthor = metaContent(doc, ["meta[property='article:author']", "meta[name='author']", "meta[property='og:author']"]);
+    if (ogAuthor && (!out.authors || out.authors.length === 0)) {
+      out.authors = splitAuthors(ogAuthor);
+    }
+    const ogDate = metaContent(doc, ["meta[property='article:published_time']", "meta[property='article:modified_time']", "meta[name='pubdate']", "meta[name='publish_date']"]);
+    if (ogDate && !out.year) {
+      const year = parseYear(ogDate);
+      if (year) {
+        out.year = year;
+      }
+    }
+
+    // 일반 SEO 메타 태그 폴백 추가
+    const stdAuthor = metaContent(doc, ["meta[name='author']", "meta[name='copyright']", "meta[name='creator']"]);
+    if (stdAuthor && (!out.authors || out.authors.length === 0)) {
+      out.authors = splitAuthors(stdAuthor);
+    }
+    const stdPublisher = metaContent(doc, ["meta[name='publisher']"]);
+    if (stdPublisher && !out.publisher) {
+      out.publisher = removeNonKoreanParen(stdPublisher);
+    }
+    const stdDate = metaContent(doc, ["meta[name='pubdate']", "meta[name='publish_date']", "meta[name='date']"]);
+    if (stdDate && !out.year) {
+      const year = parseYear(stdDate);
+      if (year) {
+        out.year = year;
+      }
+    }
+
+    return out;
+  }
+
+  function parseUniversalMetaTagsFromHtml(html) {
+    const out = {};
+    const scholar = parseGoogleScholarMetaTagsFromHtml(html);
+    Object.assign(out, scholar);
+
+    const dcTitle = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:DC\.title|dc\.title|DC\.Title)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:DC\.title|dc\.title|DC\.Title)["']/i
+    ]);
+    if (dcTitle && !out.titleMain) {
+      Object.assign(out, splitTitle(dcTitle));
+    }
+    const dcAuthorPattern = /<meta[^>]+(?:name|property)=["'](?:DC\.creator|dc\.creator|DC\.Creator|DC\.author|dc\.author)["'][^>]+content=["']([^"']+)["']/gi;
+    const dcAuthorPatternAlt = /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:DC\.creator|dc\.creator|DC\.Creator|DC\.author|dc\.author)["']/gi;
+    const dcAuthors = [];
+    let match;
+    while ((match = dcAuthorPattern.exec(html))) {
+      dcAuthors.push(cleanValue(match[1]));
+    }
+    dcAuthorPatternAlt.lastIndex = 0;
+    while ((match = dcAuthorPatternAlt.exec(html))) {
+      dcAuthors.push(cleanValue(match[1]));
+    }
+    if (dcAuthors.length && (!out.authors || out.authors.length === 0)) {
+      out.authors = splitAuthors(dcAuthors.join(";"));
+    }
+    const dcPublisher = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:DC\.publisher|dc\.publisher|DC\.Publisher)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:DC\.publisher|dc\.publisher|DC\.Publisher)["']/i
+    ]);
+    if (dcPublisher && !out.publisher) {
+      out.publisher = removeNonKoreanParen(dcPublisher);
+    }
+    const dcDate = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:DC\.date|dc\.date|DC\.Date|DC\.issued|dc\.issued)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:DC\.date|dc\.date|DC\.Date|DC\.issued|dc\.issued)["']/i
+    ]);
+    if (dcDate && !out.year) {
+      const year = parseYear(dcDate);
+      if (year) {
+        out.year = year;
+      }
+    }
+
+    const ogTitle = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:og:title|twitter:title)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:og:title|twitter:title)["']/i
+    ]);
+    if (ogTitle && !out.titleMain && isUsableTitle(ogTitle)) {
+      Object.assign(out, splitTitle(ogTitle));
+    }
+    const ogSiteName = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:og:site_name|citation_journal_title)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:og:site_name|citation_journal_title)["']/i
+    ]);
+    if (ogSiteName && !out.journalName) {
+      out.journalName = removeNonKoreanParen(ogSiteName);
+    }
+    const ogPublisher = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:article:publisher|og:publisher)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:article:publisher|og:publisher)["']/i
+    ]);
+    if (ogPublisher && !out.publisher) {
+      out.publisher = removeNonKoreanParen(ogPublisher);
+    }
+    const ogAuthor = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:article:author|author|og:author)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:article:author|author|og:author)["']/i
+    ]);
+    if (ogAuthor && (!out.authors || out.authors.length === 0)) {
+      out.authors = splitAuthors(ogAuthor);
+    }
+    const ogDate = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:article:published_time|article:modified_time|pubdate|publish_date)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:article:published_time|article:modified_time|pubdate|publish_date)["']/i
+    ]);
+    if (ogDate && !out.year) {
+      const year = parseYear(ogDate);
+      if (year) {
+        out.year = year;
+      }
+    }
+
+    // 일반 SEO 메타 태그 폴백 추가 (HTML)
+    const stdAuthor = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:author|copyright|creator)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:author|copyright|creator)["']/i
+    ]);
+    if (stdAuthor && (!out.authors || out.authors.length === 0)) {
+      out.authors = splitAuthors(stdAuthor);
+    }
+    const stdPublisher = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:publisher)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:publisher)["']/i
+    ]);
+    if (stdPublisher && !out.publisher) {
+      out.publisher = removeNonKoreanParen(stdPublisher);
+    }
+    const stdDate = firstHtmlText(html, [
+      /<meta[^>]+(?:name|property)=["'](?:pubdate|publish_date|date)["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:pubdate|publish_date|date)["']/i
+    ]);
+    if (stdDate && !out.year) {
+      const year = parseYear(stdDate);
+      if (year) {
+        out.year = year;
+      }
+    }
+
+    return out;
+  }
+
   function applyFactsToMetadata(meta, facts) {
     const next = Object.assign({}, meta || {});
-    const authors = valueByLabels(facts, ["저자", "Authors", "Author"]);
-    const journal = valueByLabels(facts, ["학술지명", "학술지", "간행물명", "논문집", "저널/프로시딩명", "Journal", "Journal/Proceedings"]);
-    const publisher = valueByLabels(facts, ["발행기관", "출판사", "발행처", "Publisher", "소속기관", "발행처명"]);
-    const year = valueByLabels(facts, ["발행연도", "발행년도", "발행년", "연도", "Year", "발행일", "게재년월", "발간년월", "Published"]);
-    const pages = valueByLabels(facts, ["수록면", "페이지", "쪽수", "Pages", "Page"]);
-    const pageFirst = valueByLabels(facts, ["시작페이지", "시작 페이지", "Start Page", "First Page"]);
-    const pageLast = valueByLabels(facts, ["끝페이지", "끝 페이지", "End Page", "Last Page"]);
-    const volumeIssue = valueByLabels(facts, ["권호사항", "권호", "Volume", "Issue"]);
-    const volume = valueByLabels(facts, ["권", "Volume", "Vol"]);
-    const issue = valueByLabels(facts, ["호", "Issue", "No"]);
-    const title = valueByLabels(facts, ["논문명", "논문제목", "제목", "Title"]);
 
-    const authorsFallback = valueByLabels(facts, ["\uc800\uc790", "\uc5f0\uad6c\uc790", "Authors", "Author"]);
-    const journalFallback = valueByLabels(facts, ["\ud559\uc220\uc9c0\uba85", "\ud559\uc220\uc9c0", "\uac04\ud589\ubb3c\uba85", "\ub17c\ubb38\uc9c0", "Journal"]);
-    const publisherFallback = valueByLabels(facts, ["\ubc1c\ud589\uae30\uad00", "\ucd9c\ud310\uc0ac", "\ubc1c\ud589\ucc98", "\uc18c\uc18d\uae30\uad00", "Publisher"]);
-    const thesisInfoFallback = valueByLabels(facts, ["\ud559\uc704\ub17c\ubb38\uc0ac\ud56d", "\ud559\uc704\ub17c\ubb38 \uc0ac\ud56d"]);
-    const yearFallback = valueByLabels(facts, ["\ubc1c\ud589\ub144\ub3c4", "\ubc1c\ud589\uc5f0\ub3c4", "\ubc1c\ud589\uc77c", "\uc5f0\ub3c4", "\ud559\uc704\uc218\uc5ec\ub144\uc6d4", "Year"]);
-    const pagesFallback = valueByLabels(facts, ["\uc218\ub85d\uba74", "\ud398\uc774\uc9c0", "\ucabd\uc218", "Pages", "Page"]);
-    const pageFirstFallback = valueByLabels(facts, ["\uc2dc\uc791\ud398\uc774\uc9c0", "\uc2dc\uc791 \ud398\uc774\uc9c0", "Start Page", "First Page"]);
-    const pageLastFallback = valueByLabels(facts, ["\ub05d\ud398\uc774\uc9c0", "\ub05d \ud398\uc774\uc9c0", "End Page", "Last Page"]);
-    const volumeIssueFallback = valueByLabels(facts, ["\uad8c\ud638\uc0ac\ud56d", "\uad8c\ud638", "Volume", "Issue"]);
-    const volumeFallback = valueByLabels(facts, ["\uad8c", "Volume", "Vol"]);
-    const issueFallback = valueByLabels(facts, ["\ud638", "Issue", "No"]);
-    const titleFallback = valueByLabels(facts, ["\ub17c\ubb38\uba85", "\ub17c\ubb38\uc81c\ubaa9", "\ud559\uc704\ub17c\ubb38\uba85", "\uc81c\ubaa9", "Title"]);
+    // 레이블 목록: fallback 변수를 비코드(\uXXXX)로 중복 정의하던 방식 제거 — 유일한 레이블 목록으로 통합
+    const authors     = valueByLabels(facts, ["\uc800\uc790", "\uc5f0\uad6c\uc790", "Authors", "Author"]);
+    const journal     = valueByLabels(facts, ["\ud559\uc220\uc9c0\uba85", "\ud559\uc220\uc9c0", "\uac04\ud589\ubb3c\uba85", "\ub17c\ubb38\uc9d1", "\ub17c\ubb38\uc9c0", "\uc800\ub110/\ud504\ub85c\uc2dc\ub529\uba85", "Journal", "Journal/Proceedings"]);
+    const publisher   = valueByLabels(facts, ["\ubc1c\ud589\uae30\uad00", "\ucd9c\ud310\uc0ac", "\ubc1c\ud589\ucc98", "\ubc1c\ud589\ucc98\uba85", "\uc18c\uc18d\uae30\uad00", "Publisher"]);
+    const year        = valueByLabels(facts, ["\ubc1c\ud589\uc5f0\ub3c4", "\ubc1c\ud589\ub144\ub3c4", "\ubc1c\ud589\ub144", "\uc5f0\ub3c4", "\ud559\uc704\uc218\uc5ec\ub144\uc6d4", "Year", "\ubc1c\ud589\uc77c", "\uac8c\uc7ac\ub144\uc6d4", "\ubc1c\uac04\ub144\uc6d4", "Published"]);
+    const pages       = valueByLabels(facts, ["\uc218\ub85d\uba74", "\ud398\uc774\uc9c0", "\ucabd\uc218", "Pages", "Page"]);
+    const pageFirst   = valueByLabels(facts, ["\uc2dc\uc791\ud398\uc774\uc9c0", "\uc2dc\uc791 \ud398\uc774\uc9c0", "Start Page", "First Page"]);
+    const pageLast    = valueByLabels(facts, ["\ub05d\ud398\uc774\uc9c0", "\ub05d \ud398\uc774\uc9c0", "End Page", "Last Page"]);
+    const volumeIssue = valueByLabels(facts, ["\uad8c\ud638\uc0ac\ud56d", "\uad8c\ud638", "Volume", "Issue"]);
+    const volume      = valueByLabels(facts, ["\uad8c", "Volume", "Vol"]);
+    const issue       = valueByLabels(facts, ["\ud638", "Issue", "No"]);
+    const title       = valueByLabels(facts, ["\ub17c\ubb38\uba85", "\ub17c\ubb38\uc81c\ubaa9", "\ud559\uc704\ub17c\ubb38\uba85", "\uc81c\ubaa9", "Title"]);
+    // \ud559\uc704\ub17c\ubb38\uc0ac\ud56d\uc740 \ubc1c\ud589\uae30\uad00\u00b7\uc5f0\ub3c4\ub97c \ubcf5\ud569\uc73c\ub85c \ub2f4\uc73c\ubbc0\ub85c \ub2e4\ub978 \ud544\ub4dc\uc640 \ubd84\ub9ac \ud30c\uc2f1
+    const thesisInfo  = valueByLabels(facts, ["\ud559\uc704\ub17c\ubb38\uc0ac\ud56d", "\ud559\uc704\ub17c\ubb38 \uc0ac\ud56d"]);
 
-    if (!next.authors.length && (authors || authorsFallback)) {
-      next.authors = splitAuthors(authors || authorsFallback);
+    if (!next.authors.length && authors) {
+      next.authors = splitAuthors(authors);
     }
-    if (!next.journalName && (journal || journalFallback)) {
-      next.journalName = journal || journalFallback;
+    if (!next.journalName && journal) {
+      next.journalName = journal;
     }
-    if (!next.publisher && (publisher || publisherFallback || thesisInfoFallback)) {
-      next.publisher = thesisInfoFallback
-        ? formatThesisPublisher(thesisInfoFallback)
-        : removeNonKoreanParen(publisher || publisherFallback);
+    if (!next.publisher && (publisher || thesisInfo)) {
+      next.publisher = thesisInfo
+        ? formatThesisPublisher(thesisInfo)
+        : removeNonKoreanParen(publisher);
     }
-    if (!next.year && (year || yearFallback || thesisInfoFallback)) {
-      next.year = parseYear(year || yearFallback || thesisInfoFallback);
+    if (!next.year && (year || thesisInfo)) {
+      next.year = parseYear(year || thesisInfo);
     }
-    if (pages || pagesFallback) {
-      Object.assign(next, parsePages(pages || pagesFallback));
+    if (pages) {
+      Object.assign(next, parsePages(pages));
     }
-    if ((pageFirst || pageFirstFallback) && !next.pageFirst) {
-      next.pageFirst = normalizeSpaces(pageFirst || pageFirstFallback).replace(/[^\d]/g, "");
+    if (pageFirst && !next.pageFirst) {
+      next.pageFirst = normalizeSpaces(pageFirst).replace(/[^\d]/g, "");
     }
-    if ((pageLast || pageLastFallback) && !next.pageLast) {
-      next.pageLast = normalizeSpaces(pageLast || pageLastFallback).replace(/[^\d]/g, "");
+    if (pageLast && !next.pageLast) {
+      next.pageLast = normalizeSpaces(pageLast).replace(/[^\d]/g, "");
     }
-    if (volumeIssue || volumeIssueFallback) {
-      const parsed = parseVolumeIssue(volumeIssue || volumeIssueFallback);
+    if (volumeIssue) {
+      const parsed = parseVolumeIssue(volumeIssue);
       next.volume = next.volume || parsed.volume;
-      next.issue = next.issue || parsed.issue;
+      next.issue  = next.issue  || parsed.issue;
     }
     if (volume && !next.volume) {
-      next.volume = normalizeSpaces(volume).replace(/[^\dA-Za-z가-힣.-]/g, "");
+      next.volume = normalizeSpaces(volume).replace(/[^\dA-Za-z\uac00-\ud7a3.-]/g, "");
     }
     if (issue && !next.issue) {
-      next.issue = normalizeSpaces(issue).replace(/[^\dA-Za-z가-힣.-]/g, "");
+      next.issue = normalizeSpaces(issue).replace(/[^\dA-Za-z\uac00-\ud7a3.-]/g, "");
     }
-    if (volumeFallback && !next.volume) {
-      next.volume = normalizeSpaces(volumeFallback).replace(/[^\dA-Za-z\uac00-\ud7a3-]/g, "");
-    }
-    if (issueFallback && !next.issue) {
-      next.issue = normalizeSpaces(issueFallback).replace(/[^\dA-Za-z\uac00-\ud7a3-]/g, "");
-    }
-    if (!next.titleMain && (title || titleFallback)) {
-      Object.assign(next, splitTitle(title || titleFallback));
+    if (!next.titleMain && title) {
+      Object.assign(next, splitTitle(title));
     }
 
     return next;
   }
+
 
   function blankMetadata(source, pageUrl) {
     return {
@@ -498,7 +946,7 @@
     if (/kiss\.kstudy\.com$/i.test(host) && /\/Detail/i.test(parsed.pathname)) {
       return SOURCES.KISS;
     }
-    if (/dbpia\.com$/i.test(host) && /\/journal\/(?:articleDetail|detail)/i.test(parsed.pathname)) {
+    if (/dbpia\.(?:com|co\.kr)$/i.test(host) && /\/journal\/(?:articleDetail|detail)/i.test(parsed.pathname)) {
       return SOURCES.DBPIA;
     }
     if (/earticle\.net$/i.test(host) && /\/Article\//i.test(parsed.pathname)) {
@@ -558,6 +1006,9 @@
       return false;
     }
     if (/(열기|닫기)\s*버튼/.test(text)) {
+      return false;
+    }
+    if (/^(구분|순서|번호|목록|선택|기능|열기|닫기|보기|상세|정보|검색)$/.test(text)) {
       return false;
     }
     return /[가-힣A-Za-z0-9]/.test(text);
@@ -661,9 +1112,12 @@
       out.pageFirst = out.pageFirst || info[3];
       out.pageLast = out.pageLast || info[4];
     }
-    const publisher = source.match(/발행기관\s*:\s*([^\n]+)/);
+    const publisher = source.match(/발행기관\s*:\s*(.+?)(?=\s*(?:연구분야|저자|초록|키워드|학술지명|발행년도|페이지|권호|원문|피인용|참고문헌|목차|음성|$))/i);
     if (publisher && !out.publisher) {
-      out.publisher = cleanValue(publisher[1]);
+      const val = cleanValue(publisher[1]);
+      if (val.length <= 100) {
+        out.publisher = val;
+      }
     }
     return out;
   }
@@ -685,10 +1139,18 @@
     if (title) {
       Object.assign(out, splitTitle(title));
     }
-    const pipeLine = lines.find((line) => line.includes("|")) || joined;
-    const parts = pipeLine.split("|").map(cleanValue).filter(Boolean);
-    if (parts.length) {
-      out.authors = splitAuthors(parts[0]);
+    let parts = [];
+    const pipeLine = lines.find((line) => line.includes("|"));
+    if (pipeLine) {
+      parts = pipeLine.split("|").map(cleanValue).filter(Boolean);
+      if (parts.length) {
+        out.authors = splitAuthors(parts[0]);
+      }
+    } else if (joined.length <= 50) {
+      parts = joined.split("|").map(cleanValue).filter(Boolean);
+      if (parts.length) {
+        out.authors = splitAuthors(parts[0]);
+      }
     }
     if (source === SOURCES.RISS && (!out.authors.length || !out.year || !out.publisher)) {
       const titleIndex = title ? lines.indexOf(title) : -1;
@@ -759,9 +1221,15 @@
     const pageUrl = url || (global.location && global.location.href) || "";
     const source = detectSource(pageUrl);
     let meta = blankMetadata(source, pageUrl);
-    if (!doc || source === (SOURCES.UNKNOWN || "unknown")) {
+    if (!doc) {
       return meta;
     }
+
+    const jsonLdMeta = parseJsonLd(doc);
+    meta = mergePreferExtra(meta, jsonLdMeta);
+
+    const universalMeta = parseUniversalMetaTags(doc);
+    meta = mergePreferExtra(meta, universalMeta);
 
     const facts = collectFactsFromDocument(doc);
     meta = applyFactsToMetadata(meta, facts);
@@ -771,6 +1239,12 @@
     }
     if (!meta.titleMain) {
       Object.assign(meta, extractTitle(doc, source));
+    }
+    if (!meta.titleMain) {
+      const docTitle = cleanValue(doc.title);
+      if (isUsableTitle(docTitle)) {
+        Object.assign(meta, splitTitle(docTitle));
+      }
     }
     if (!meta.authors.length) {
       meta.authors = extractAuthorsBySelector(doc);
@@ -833,7 +1307,7 @@
       while ((match = pattern.exec(html))) {
         const label = cleanLabel(stripTags(decodeHtml(match[1])));
         const value = cleanValue(stripTags(decodeHtml(match[2])));
-        if (label && value && !facts[label]) {
+        if (label && value && value.length <= FACTS_MAX_VALUE_LENGTH && !facts[label]) {
           facts[label] = value;
         }
       }
@@ -914,6 +1388,12 @@
   function parseFixtureHtml(html, url) {
     const source = detectSource(url);
     let meta = blankMetadata(source, url);
+
+    const jsonLdMeta = parseJsonLdFromHtml(html);
+    meta = mergePreferExtra(meta, jsonLdMeta);
+
+    const universalMeta = parseUniversalMetaTagsFromHtml(html);
+    meta = mergePreferExtra(meta, universalMeta);
     meta = applyFactsToMetadata(meta, collectFactsFromHtml(html));
     if (source === SOURCES.KCI) {
       meta = mergePreferExtra(meta, parseKciHtml(html));
@@ -944,6 +1424,8 @@
     normalizeMetadata,
     normalizeSpaces,
     parseFixtureHtml,
+    parseJsonLd,
+    parseJsonLdFromHtml,
     parseKciCitationText,
     parsePages,
     parseResultText,
