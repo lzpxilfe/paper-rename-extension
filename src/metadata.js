@@ -936,35 +936,31 @@
       return SOURCES.UNKNOWN || "unknown";
     }
     const host = parsed.hostname;
-    const href = parsed.href;
     if (/riss/i.test(host)) {
       return SOURCES.RISS;
     }
-    if (/kci\.go\.kr$/i.test(host) && /\/kciportal\//i.test(parsed.pathname)) {
+    if (/kci\.go\.kr/i.test(host) && /\/kciportal\//i.test(parsed.pathname)) {
       return SOURCES.KCI;
     }
-    if (/kiss\.kstudy\.com$/i.test(host) && /\/Detail/i.test(parsed.pathname)) {
+    if (/kiss.*kstudy/i.test(host) && /\/Detail/i.test(parsed.pathname)) {
       return SOURCES.KISS;
     }
-    if (/dbpia\.(?:com|co\.kr)$/i.test(host) && /\/journal\/(?:articleDetail|detail)/i.test(parsed.pathname)) {
+    if (/dbpia/i.test(host) && /\/journal\/(?:articleDetail|detail)/i.test(parsed.pathname)) {
       return SOURCES.DBPIA;
     }
-    if (/earticle\.net$/i.test(host) && /\/Article\//i.test(parsed.pathname)) {
+    if (/earticle/i.test(host) && /\/Article\//i.test(parsed.pathname)) {
       return SOURCES.EARTICLE;
     }
-    if (/scholar\.kyobobook\.co\.kr$/i.test(host) && /\/article\/detail\//i.test(parsed.pathname)) {
+    if (/scholar.*kyobobook/i.test(host)) {
       return SOURCES.SCHOLAR;
     }
-    if (/scholar-kyobobook-co-kr-ssl\.openlib\.uos\.ac\.kr$/i.test(host)) {
-      return SOURCES.SCHOLAR;
-    }
-    if (/koreascience\.or\.kr$/i.test(host)) {
+    if (/koreascience/i.test(host)) {
       return SOURCES.KOREASCIENCE;
     }
-    if (/scienceon\.kisti\.re\.kr$/i.test(host)) {
+    if (/scienceon/i.test(host)) {
       return SOURCES.SCIENCEON;
     }
-    if (/(^|\.)krm\.or\.kr$/i.test(host)) {
+    if (/krm\.or\.kr/i.test(host)) {
       return SOURCES.KRM;
     }
     return SOURCES.UNKNOWN || "unknown";

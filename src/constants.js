@@ -48,26 +48,41 @@
   const MAX_FILENAME_LENGTH_MIN = 40;
   const MAX_FILENAME_LENGTH_MAX = 240;
 
+  const ACADEMIC_DOMAINS_PATTERN = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection/i;
+
+  const KNOWN_HOST_PATTERNS = [
+    /riss/i,
+    /kci\.go\.kr$/i,
+    /kiss\.kstudy\.com$/i,
+    /dbpia\.(?:com|co\.kr)$/i,
+    /earticle\.net$/i,
+    /scholar.*kyobobook/i,
+    /koreascience\.or\.kr$/i,
+    /scienceon\.kisti\.re\.kr$/i,
+    /krm\.or\.kr$/i
+  ];
+
   function isAcademicSite(url) {
     if (!url) return false;
     try {
       const parsed = new URL(url);
       const host = parsed.hostname;
       const path = parsed.pathname;
-      const academicPattern = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection/i;
-      return academicPattern.test(host) || academicPattern.test(path);
+      return ACADEMIC_DOMAINS_PATTERN.test(host) || ACADEMIC_DOMAINS_PATTERN.test(path);
     } catch (_e) {
       return false;
     }
   }
 
   const api = {
+    ACADEMIC_DOMAINS_PATTERN,
     ACTION,
     APP_TITLE,
     CONTEXT_SETTLE_DELAY_MS,
     CONTEXT_TTL_MS,
     DEFAULT_SETTINGS,
     isAcademicSite,
+    KNOWN_HOST_PATTERNS,
     MAX_CONTEXTS,
     MAX_FILENAME_LENGTH_DEFAULT,
     MAX_FILENAME_LENGTH_MIN,

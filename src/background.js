@@ -136,17 +136,7 @@ function sameKnownPaperHost(left, right) {
   if (!leftHost || !rightHost) {
     return false;
   }
-  const knownHosts = [
-    /riss/i,
-    /kci\.go\.kr$/i,
-    /kiss\.kstudy\.com$/i,
-    /dbpia\.(?:com|co\.kr)$/i,
-    /earticle\.net$/i,
-    /scholar.*kyobobook/i,
-    /koreascience\.or\.kr$/i,
-    /scienceon\.kisti\.re\.kr$/i,
-    /krm\.or\.kr$/i
-  ];
+  const knownHosts = constants.KNOWN_HOST_PATTERNS || [];
   return knownHosts.some((pattern) => pattern.test(leftHost) && pattern.test(rightHost));
 }
 
