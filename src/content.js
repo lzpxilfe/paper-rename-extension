@@ -155,12 +155,53 @@
     return lastMetadata || metadataModule.blankMetadata(metadataModule.detectSource(location.href), location.href);
   }
 
+  function nearbyContainer(control) {
+    if (!control || !control.closest) {
+      return null;
+    }
+    const selectors = [
+      "li",
+      "article",
+      ".item",
+      ".result",
+      ".result-list",
+      ".search-result",
+      ".srchResultListW",
+      ".cont",
+      ".box",
+      ".card",
+      "tr",
+      "dl",
+      "section"
+    ];
+    for (const selector of selectors) {
+      const found = safeClosest(control, selector);
+      if (found && found.textContent && found.textContent.length >= control.textContent.length) {
+        return found;
+      }
+    }
+    return control;
+  }
+
+  function metadataFromControl(control) {
+    const current = getCurrentMetadata();
+    const container = nearbyContainer(control);
+    const text = container ? container.innerText || container.textContent || "" : "";
+    const scoped = metadataModule.parseResultText(text, current.source || metadataModule.detectSource(location.href), location.href);
+    if (scoped && (scoped.titleMain || scoped.authors.length || scoped.journalName || scoped.year)) {
+      return Object.assign({}, current, Object.fromEntries(
+        Object.entries(scoped).filter(([, value]) => Array.isArray(value) ? value.length > 0 : Boolean(value))
+      ));
+    }
+    return current;
+  }
+
   function sendDownloadContext(control) {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
       return;
     }
     const downloadUrl = downloadUrlFromControl(control);
-    const metadata = getCurrentMetadata();
+    const metadata = metadataFromControl(control);
     const context = {
       metadata: Object.assign({}, metadata, {
         originalFilename: metadata.originalFilename || originalFilenameFromControl(control, downloadUrl)

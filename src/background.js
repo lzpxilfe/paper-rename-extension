@@ -82,7 +82,9 @@ function contextScore(entry, downloadItem, now) {
   }
   const context = entry.context;
   const itemUrl = normalizeUrl(downloadItem.finalUrl || downloadItem.url || "");
+  const itemReferrer = normalizeUrl(downloadItem.referrer || downloadItem.tabUrl || "");
   const contextUrl = normalizeUrl(context.downloadUrl || "");
+  const pageUrl = normalizeUrl(context.pageUrl || "");
   const originalFilename = normalizeUrl(context.originalFilename || (context.metadata && context.metadata.originalFilename) || "");
   const itemFilename = normalizeUrl(downloadItem.filename || "");
   let score = 0;
@@ -92,6 +94,9 @@ function contextScore(entry, downloadItem, now) {
   }
   if (contextUrl && itemUrl && (itemUrl === contextUrl || itemUrl.includes(contextUrl) || contextUrl.includes(itemUrl))) {
     score += 8;
+  }
+  if (pageUrl && itemReferrer && (itemReferrer === pageUrl || itemReferrer.includes(pageUrl) || pageUrl.includes(itemReferrer))) {
+    score += 6;
   }
   if (contextUrl && itemUrl && basename(contextUrl) && itemUrl.includes(basename(contextUrl))) {
     score += 4;
@@ -119,7 +124,14 @@ function chooseContextEntry(downloadItem, nowValue) {
       best = { entry, score };
     }
   }
-  if (!best || best.score < 4) {
+  if ((!best || best.score < 4) && pendingContexts.length === 1) {
+    const only = pendingContexts[0];
+    const age = now - only.context.capturedAt;
+    if (age >= 0 && age < 2 * 60 * 1000 && only.context.metadata && only.context.metadata.titleMain) {
+      best = { entry: only, score: best ? best.score : 0 };
+    }
+  }
+  if (!best || best.score < 3) {
     return null;
   }
   pendingContexts = pendingContexts.filter((entry) => entry !== best.entry);

@@ -122,6 +122,10 @@ test("default field list does not include sequence number", () => {
   assert.ok(!fields.includes("sequenceNumber"));
 });
 
+test("author cleanup removes romanization and duplicate affiliation numbers", () => {
+  assert.deepEqual(metadata.splitAuthors("이차원 Lee ChaWon 1·이차원 Lee ChaWon 1"), ["이차원"]);
+});
+
 test("background chooses the nearest same-tab context", () => {
   background._state.reset();
   const now = Date.now();
@@ -159,9 +163,58 @@ test("background returns null when no context matches", () => {
   assert.equal(background.chooseContextEntry({ tabId: 1, url: "https://example.test/article.pdf" }), null);
 });
 
+test("background accepts one recent context for viewer-mediated downloads", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/Search.do?query=test",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 7 }, frameId: 0 });
+
+  const entry = background.chooseContextEntry({
+    tabId: 12,
+    url: "https://viewer.example.test/download",
+    filename: "download.pdf"
+  }, now + 1000);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("KCI realistic page prefers citation metadata over UI button text", () => {
+  const actual = metadata.parseFixtureHtml(
+    fixture("kci-realistic.html"),
+    "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003238959"
+  );
+
+  assert.deepEqual(actual.authors, ["이차원"]);
+  assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 성격과 기능");
+  assert.equal(actual.journalName, "백제학보");
+  assert.equal(actual.issue, "53");
+  assert.equal(actual.pageFirst, "5");
+  assert.equal(actual.pageLast, "60");
+});
+
+test("RISS search result text yields thesis metadata for original-view clicks", () => {
+  const actual = metadata.parseResultText(`
+    학위논문 1
+    백제 한성기 몽촌토성의 축조 목적과 기능
+    이차원 | 서울시립대학교 일반대학원 | 2025 | 국내석사
+    원문보기 목차검색조회 음성듣기
+  `, "RISS", "https://www.riss.kr/search/Search.do?query=몽촌토성");
+
+  assert.deepEqual(actual.authors, ["이차원"]);
+  assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 축조 목적과 기능");
+  assert.equal(actual.publisher, "서울시립대학교 일반대학원");
+  assert.equal(actual.year, "2025");
+});
+
 const fixtureCases = [
   ["riss.html", "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1", "RISS", "근대 문학의 매체성과 독자", "한국문학연구", "2025"],
   ["kci.html", "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci", "KCI", "한국 고전 서사의 공간 연구", "고전문학과 해석", "2024"],
+  ["kci-realistic.html", "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003238959", "KCI", "백제 한성기 몽촌토성의 성격과 기능", "백제학보", "2025"],
   ["kiss.html", "https://kiss.kstudy.com/Detail/Ar?key=1", "KISS", "일제강점기 잡지 번역의 양상", "현대문학사", "2023"],
   ["dbpia.html", "https://www.dbpia.com/journal/articleDetail?nodeId=1", "DBpia", "문학장과 출판 네트워크", "인문학연구", "2022"],
   ["earticle.html", "https://www.earticle.net/Article/A1", "eArticle", "근대 독서 문화의 형성", "독서문화연구", "2021"],

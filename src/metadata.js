@@ -118,14 +118,41 @@
   function splitAuthors(value) {
     const text = removeNonKoreanParen(fixTypography(value))
       .replace(/\s+외\s+\d+\s*명/g, "")
+      .replace(/\s*\/\s*/g, ";")
       .replace(/\s+and\s+/ig, ";")
       .replace(/[;；]/g, ";");
-    const pieces = text.split(/;|ㆍ|·|\n|\r/).map(cleanValue).filter(Boolean);
+    const pieces = text.split(/;|ㆍ|·|\n|\r/).map(cleanAuthorName).filter(Boolean);
     if (pieces.length > 1) {
-      return pieces;
+      return uniqueValues(pieces);
     }
-    const commaPieces = text.split(/\s*,\s*/).map(cleanValue).filter(Boolean);
-    return commaPieces.length > 1 ? commaPieces : (text ? [cleanValue(text)] : []);
+    const commaPieces = text.split(/\s*,\s*/).map(cleanAuthorName).filter(Boolean);
+    return commaPieces.length > 1 ? uniqueValues(commaPieces) : (text ? uniqueValues([cleanAuthorName(text)]) : []);
+  }
+
+  function cleanAuthorName(value) {
+    let text = cleanValue(value)
+      .replace(/\s+\d+$/g, "")
+      .replace(/\s*\^\{\d+\}\s*$/g, "");
+    const korean = text.match(/[가-힣]{2,}(?:\s*[·ㆍ]\s*[가-힣]{2,})*/);
+    if (korean) {
+      text = korean[0];
+    }
+    return cleanValue(text);
+  }
+
+  function uniqueValues(values) {
+    const seen = new Set();
+    const output = [];
+    values.forEach((value) => {
+      const cleaned = cleanValue(value);
+      const key = cleaned.replace(/\s+/g, "").toLowerCase();
+      if (!cleaned || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      output.push(cleaned);
+    });
+    return output;
   }
 
   function textOf(element) {
@@ -318,7 +345,7 @@
     }
     const host = parsed.hostname;
     const href = parsed.href;
-    if (/riss/i.test(host) && /\/search\/detail\/DetailView\.do/i.test(parsed.pathname)) {
+    if (/riss/i.test(host)) {
       return SOURCES.RISS;
     }
     if (/kci\.go\.kr$/i.test(host) && /\/kciportal\//i.test(parsed.pathname)) {
@@ -366,8 +393,178 @@
     const selectors = (sourceTitleSelectors[source] || [])
       .concat(["meta[property='og:title']", "meta[name='title']", "title"]);
     const metaTitle = metaContent(doc, ["meta[property='og:title']", "meta[name='title']"]);
-    const title = firstText(doc, selectors.filter((selector) => !selector.startsWith("meta"))) || metaTitle || cleanValue(doc && doc.title);
+    const candidates = selectors
+      .filter((selector) => !selector.startsWith("meta"))
+      .map((selector) => firstText(doc, [selector]))
+      .concat([metaTitle, cleanValue(doc && doc.title)])
+      .filter(Boolean);
+    const title = candidates.find((candidate) => isUsableTitle(candidate)) || "";
     return splitTitle(title.replace(/\s*-\s*(RISS|KCI|KISS|DBpia|eArticle|교보문고|스콜라|KoreaScience|ScienceON|KRM).*$/i, ""));
+  }
+
+  function isUsableTitle(value) {
+    const text = cleanValue(value);
+    if (text.length < 4 || text.length > 180) {
+      return false;
+    }
+    if (/^(초록|키워드|논문정보|참고문헌|인용현황|원문\s*찾아보기|Download|Loading)$/i.test(text)) {
+      return false;
+    }
+    if (/(열기|닫기)\s*버튼/.test(text)) {
+      return false;
+    }
+    return /[가-힣A-Za-z0-9]/.test(text);
+  }
+
+  function mergePreferExisting(base, extra) {
+    const next = Object.assign({}, base || {});
+    Object.entries(extra || {}).forEach(([key, value]) => {
+      if (key === "authors") {
+        const authors = Array.isArray(value) ? value : splitAuthors(value);
+        if ((!next.authors || next.authors.length === 0) && authors.length) {
+          next.authors = authors;
+        }
+        return;
+      }
+      if ((next[key] === undefined || next[key] === "") && value) {
+        next[key] = value;
+      }
+    });
+    return next;
+  }
+
+  function mergePreferExtra(base, extra) {
+    const next = Object.assign({}, base || {});
+    Object.entries(extra || {}).forEach(([key, value]) => {
+      if (key === "authors") {
+        const authors = Array.isArray(value) ? value : splitAuthors(value);
+        if (authors.length) {
+          next.authors = authors;
+        }
+        return;
+      }
+      if (value) {
+        next[key] = value;
+      }
+    });
+    return next;
+  }
+
+  function parseKciCitationText(text) {
+    const source = String(text || "");
+    const out = {};
+    const bib = {
+      author: source.match(/author=\{([^}]+)\}/i),
+      title: source.match(/title=\{([^}]+)\}/i),
+      journal: source.match(/journal=\{([^}]+)\}/i),
+      year: source.match(/year=\{([^}]+)\}/i),
+      number: source.match(/number=\{([^}]+)\}/i),
+      pages: source.match(/pages=\{([^}]+)\}/i)
+    };
+    if (bib.author) {
+      out.authors = splitAuthors(bib.author[1]);
+    }
+    if (bib.title) {
+      Object.assign(out, splitTitle(bib.title[1]));
+    }
+    if (bib.journal) {
+      out.journalName = cleanValue(bib.journal[1]);
+    }
+    if (bib.year) {
+      out.year = parseYear(bib.year[1]);
+    }
+    if (bib.number) {
+      out.issue = cleanValue(bib.number[1]);
+    }
+    if (bib.pages) {
+      Object.assign(out, parsePages(bib.pages[1]));
+    }
+
+    const risMap = [
+      ["authors", /(?:^|\n)AU\s*-\s*([^\n<]+)/i],
+      ["title", /(?:^|\n)TI\s*-\s*([^\n<]+)/i],
+      ["journalName", /(?:^|\n)(?:T2|JO)\s*-\s*([^\n<]+)/i],
+      ["year", /(?:^|\n)PY\s*-\s*([^\n<]+)/i],
+      ["issue", /(?:^|\n)IS\s*-\s*([^\n<]+)/i],
+      ["publisher", /(?:^|\n)PB\s*-\s*([^\n<]+)/i],
+      ["pageFirst", /(?:^|\n)SP\s*-\s*([^\n<]+)/i],
+      ["pageLast", /(?:^|\n)EP\s*-\s*([^\n<]+)/i]
+    ];
+    risMap.forEach(([key, pattern]) => {
+      const match = source.match(pattern);
+      if (!match || out[key]) {
+        return;
+      }
+      const value = cleanValue(match[1]);
+      if (key === "authors") {
+        out.authors = splitAuthors(value);
+      } else if (key === "title") {
+        Object.assign(out, splitTitle(value));
+      } else if (key === "year") {
+        out.year = parseYear(value);
+      } else {
+        out[key] = value;
+      }
+    });
+
+    const info = source.match(/(\d{4}),\s*vol\.,\s*no\.([0-9A-Za-z가-힣.-]+),\s*pp\.\s*([0-9]+)\s*-\s*([0-9]+)/i);
+    if (info) {
+      out.year = out.year || info[1];
+      out.issue = out.issue || info[2];
+      out.pageFirst = out.pageFirst || info[3];
+      out.pageLast = out.pageLast || info[4];
+    }
+    const publisher = source.match(/발행기관\s*:\s*([^\n]+)/);
+    if (publisher && !out.publisher) {
+      out.publisher = cleanValue(publisher[1]);
+    }
+    return out;
+  }
+
+  function parseResultText(text, source, pageUrl) {
+    const lines = String(text || "")
+      .split(/\n|\r|\s{2,}/)
+      .map(cleanValue)
+      .filter(Boolean)
+      .filter((line) => !/^(KCI등재|무료|유료|기관 내 무료|원문보기|목차검색조회|음성듣기|\d+|F|M|W)$/.test(line));
+
+    const joined = lines.join(" | ");
+    const out = blankMetadata(source, pageUrl || "");
+    const title = lines.find((line) =>
+      isUsableTitle(line) &&
+      !/^(저자|발행|학술|권호|수록|검색|결과|국내학술논문|학위논문)/.test(line) &&
+      !/\s\|\s/.test(line)
+    );
+    if (title) {
+      Object.assign(out, splitTitle(title));
+    }
+    const pipeLine = lines.find((line) => line.includes("|")) || joined;
+    const parts = pipeLine.split("|").map(cleanValue).filter(Boolean);
+    if (parts.length) {
+      out.authors = splitAuthors(parts[0]);
+    }
+    const yearPart = parts.find((part) => parseYear(part));
+    if (yearPart) {
+      out.year = parseYear(yearPart);
+    }
+    const pagePart = parts.find((part) => /pp\.?\s*\d+|[0-9]+\s*[-~]\s*[0-9]+/.test(part));
+    if (pagePart) {
+      Object.assign(out, parsePages(pagePart));
+    }
+    const volPart = parts.find((part) => /(?:Vol\.|No\.|\(\d+\)|\d+\s*권|\d+\s*호)/i.test(part));
+    if (volPart) {
+      Object.assign(out, parseVolumeIssue(volPart));
+    }
+    if (parts.length >= 4) {
+      const likelyJournal = parts.find((part) => /학보|학회지|연구|논문|저널|Journal|Review/i.test(part));
+      out.journalName = likelyJournal || out.journalName;
+      if (!out.publisher) {
+        out.publisher = parts.find((part) => /학회|대학교|대학원|연구소|박물관|기관/.test(part)) || "";
+      }
+    } else if (parts.length >= 2 && !out.publisher) {
+      out.publisher = parts[1];
+    }
+    return normalizeMetadata(out);
   }
 
   function extractAuthorsBySelector(doc) {
@@ -400,6 +597,9 @@
 
     const facts = collectFactsFromDocument(doc);
     meta = applyFactsToMetadata(meta, facts);
+    if (source === SOURCES.KCI) {
+      meta = mergePreferExtra(meta, parseKciCitationText(textOf(doc.body || doc.documentElement || doc)));
+    }
     if (!meta.titleMain) {
       Object.assign(meta, extractTitle(doc, source));
     }
@@ -415,6 +615,7 @@
   function normalizeMetadata(meta) {
     const next = Object.assign(blankMetadata(meta && meta.source, meta && meta.pageUrl), meta || {});
     next.authors = Array.isArray(next.authors) ? next.authors.map(cleanValue).filter(Boolean) : splitAuthors(next.authors);
+    next.authors = uniqueValues(next.authors.map(cleanAuthorName));
     [
       "titleMain",
       "titleSub",
@@ -491,6 +692,9 @@
     const source = detectSource(url);
     let meta = blankMetadata(source, url);
     meta = applyFactsToMetadata(meta, collectFactsFromHtml(html));
+    if (source === SOURCES.KCI) {
+      meta = mergePreferExtra(meta, parseKciCitationText(stripTags(html)));
+    }
     if (!meta.titleMain) {
       Object.assign(meta, splitTitle(titleFromHtml(html)));
     }
@@ -504,6 +708,7 @@
     applyFactsToMetadata,
     blankMetadata,
     cleanValue,
+    cleanAuthorName,
     collectFactsFromDocument,
     collectFactsFromHtml,
     detectSource,
@@ -512,7 +717,9 @@
     normalizeMetadata,
     normalizeSpaces,
     parseFixtureHtml,
+    parseKciCitationText,
     parsePages,
+    parseResultText,
     parseVolumeIssue,
     parseYear,
     removeNonKoreanParen,

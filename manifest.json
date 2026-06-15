@@ -9,7 +9,7 @@
     "activeTab"
   ],
   "host_permissions": [
-    "https://*.riss.kr/search/detail/DetailView.do*",
+    "https://*.riss.kr/*",
     "https://www.kci.go.kr/kciportal/*",
     "https://*.kiss.kstudy.com/Detail*/Ar*",
     "https://*.dbpia.com/journal/articleDetail*",
@@ -33,7 +33,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.riss.kr/search/detail/DetailView.do*",
+        "https://*.riss.kr/*",
         "https://www.kci.go.kr/kciportal/*",
         "https://*.kiss.kstudy.com/Detail*/Ar*",
         "https://*.dbpia.com/journal/articleDetail*",
