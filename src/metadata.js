@@ -116,6 +116,19 @@
   }
 
   function splitAuthors(value) {
+    const robustText = removeNonKoreanParen(fixTypography(value))
+      .replace(/\s+\d+$/g, "")
+      .replace(/\s+\d+\s*\uba85/g, "")
+      .replace(/\s*\/\s*/g, ";")
+      .replace(/\s+and\s+/ig, ";")
+      .replace(/[\u00b7\u318d;]+/g, ";");
+    const robustPieces = robustText
+      .split(/;|,|\n|\r/)
+      .map(cleanAuthorName)
+      .filter(Boolean);
+    if (robustPieces.length) {
+      return uniqueValues(robustPieces);
+    }
     const text = removeNonKoreanParen(fixTypography(value))
       .replace(/\s+외\s+\d+\s*명/g, "")
       .replace(/\s*\/\s*/g, ";")
@@ -133,6 +146,10 @@
     let text = cleanValue(value)
       .replace(/\s+\d+$/g, "")
       .replace(/\s*\^\{\d+\}\s*$/g, "");
+    const koreanSafe = text.match(/[\uac00-\ud7a3]{2,}(?:\s*[\u00b7\u318d]\s*[\uac00-\ud7a3]{2,})*/);
+    if (koreanSafe) {
+      text = koreanSafe[0];
+    }
     const korean = text.match(/[가-힣]{2,}(?:\s*[·ㆍ]\s*[가-힣]{2,})*/);
     if (korean) {
       text = korean[0];
@@ -243,6 +260,33 @@
     return "";
   }
 
+  function formatThesisPublisher(value) {
+    const text = cleanValue(value);
+    if (!text) {
+      return "";
+    }
+    const parts = text
+      .split(/--|,|\||;/)
+      .map(cleanValue)
+      .filter(Boolean);
+    const institution = parts.find((part) => /[\uac00-\ud7a3]*(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\uc5f0\uad6c\uc6d0)/.test(part)) || parts[0] || "";
+    const department = parts.find((part) =>
+      part !== institution &&
+      !parseYear(part) &&
+      /(?:\ud559\uacfc|\uc804\uacf5|\ud559\ubd80|\uacc4\uc5f4)/.test(part)
+    ) || "";
+    const degreeSource = parts.find((part) => /(?:\uc11d\uc0ac|\ubc15\uc0ac|\ud559\uc704\ub17c\ubb38)/.test(part)) || "";
+    let degree = "";
+    if (/\ubc15\uc0ac/.test(degreeSource)) {
+      degree = "\ubc15\uc0ac\ud559\uc704\ub17c\ubb38";
+    } else if (/\uc11d\uc0ac/.test(degreeSource)) {
+      degree = "\uc11d\uc0ac\ud559\uc704\ub17c\ubb38";
+    } else if (/\ud559\uc704\ub17c\ubb38/.test(degreeSource)) {
+      degree = degreeSource;
+    }
+    return [institution, department, degree].map(cleanValue).filter(Boolean).join(" ");
+  }
+
   function firstText(doc, selectors) {
     for (const selector of selectors) {
       const element = q(doc, selector);
@@ -279,29 +323,44 @@
     const issue = valueByLabels(facts, ["호", "Issue", "No"]);
     const title = valueByLabels(facts, ["논문명", "논문제목", "제목", "Title"]);
 
-    if (!next.authors.length && authors) {
-      next.authors = splitAuthors(authors);
+    const authorsFallback = valueByLabels(facts, ["\uc800\uc790", "\uc5f0\uad6c\uc790", "Authors", "Author"]);
+    const journalFallback = valueByLabels(facts, ["\ud559\uc220\uc9c0\uba85", "\ud559\uc220\uc9c0", "\uac04\ud589\ubb3c\uba85", "\ub17c\ubb38\uc9c0", "Journal"]);
+    const publisherFallback = valueByLabels(facts, ["\ubc1c\ud589\uae30\uad00", "\ucd9c\ud310\uc0ac", "\ubc1c\ud589\ucc98", "\uc18c\uc18d\uae30\uad00", "Publisher"]);
+    const thesisInfoFallback = valueByLabels(facts, ["\ud559\uc704\ub17c\ubb38\uc0ac\ud56d", "\ud559\uc704\ub17c\ubb38 \uc0ac\ud56d"]);
+    const yearFallback = valueByLabels(facts, ["\ubc1c\ud589\ub144\ub3c4", "\ubc1c\ud589\uc5f0\ub3c4", "\ubc1c\ud589\uc77c", "\uc5f0\ub3c4", "\ud559\uc704\uc218\uc5ec\ub144\uc6d4", "Year"]);
+    const pagesFallback = valueByLabels(facts, ["\uc218\ub85d\uba74", "\ud398\uc774\uc9c0", "\ucabd\uc218", "Pages", "Page"]);
+    const pageFirstFallback = valueByLabels(facts, ["\uc2dc\uc791\ud398\uc774\uc9c0", "\uc2dc\uc791 \ud398\uc774\uc9c0", "Start Page", "First Page"]);
+    const pageLastFallback = valueByLabels(facts, ["\ub05d\ud398\uc774\uc9c0", "\ub05d \ud398\uc774\uc9c0", "End Page", "Last Page"]);
+    const volumeIssueFallback = valueByLabels(facts, ["\uad8c\ud638\uc0ac\ud56d", "\uad8c\ud638", "Volume", "Issue"]);
+    const volumeFallback = valueByLabels(facts, ["\uad8c", "Volume", "Vol"]);
+    const issueFallback = valueByLabels(facts, ["\ud638", "Issue", "No"]);
+    const titleFallback = valueByLabels(facts, ["\ub17c\ubb38\uba85", "\ub17c\ubb38\uc81c\ubaa9", "\ud559\uc704\ub17c\ubb38\uba85", "\uc81c\ubaa9", "Title"]);
+
+    if (!next.authors.length && (authors || authorsFallback)) {
+      next.authors = splitAuthors(authors || authorsFallback);
     }
-    if (!next.journalName && journal) {
-      next.journalName = journal;
+    if (!next.journalName && (journal || journalFallback)) {
+      next.journalName = journal || journalFallback;
     }
-    if (!next.publisher && publisher) {
-      next.publisher = removeNonKoreanParen(publisher);
+    if (!next.publisher && (publisher || publisherFallback || thesisInfoFallback)) {
+      next.publisher = thesisInfoFallback
+        ? formatThesisPublisher(thesisInfoFallback)
+        : removeNonKoreanParen(publisher || publisherFallback);
     }
-    if (!next.year && year) {
-      next.year = parseYear(year);
+    if (!next.year && (year || yearFallback || thesisInfoFallback)) {
+      next.year = parseYear(year || yearFallback || thesisInfoFallback);
     }
-    if (pages) {
-      Object.assign(next, parsePages(pages));
+    if (pages || pagesFallback) {
+      Object.assign(next, parsePages(pages || pagesFallback));
     }
-    if (pageFirst && !next.pageFirst) {
-      next.pageFirst = normalizeSpaces(pageFirst).replace(/[^\d]/g, "");
+    if ((pageFirst || pageFirstFallback) && !next.pageFirst) {
+      next.pageFirst = normalizeSpaces(pageFirst || pageFirstFallback).replace(/[^\d]/g, "");
     }
-    if (pageLast && !next.pageLast) {
-      next.pageLast = normalizeSpaces(pageLast).replace(/[^\d]/g, "");
+    if ((pageLast || pageLastFallback) && !next.pageLast) {
+      next.pageLast = normalizeSpaces(pageLast || pageLastFallback).replace(/[^\d]/g, "");
     }
-    if (volumeIssue) {
-      const parsed = parseVolumeIssue(volumeIssue);
+    if (volumeIssue || volumeIssueFallback) {
+      const parsed = parseVolumeIssue(volumeIssue || volumeIssueFallback);
       next.volume = next.volume || parsed.volume;
       next.issue = next.issue || parsed.issue;
     }
@@ -311,8 +370,14 @@
     if (issue && !next.issue) {
       next.issue = normalizeSpaces(issue).replace(/[^\dA-Za-z가-힣.-]/g, "");
     }
-    if (!next.titleMain && title) {
-      Object.assign(next, splitTitle(title));
+    if (volumeFallback && !next.volume) {
+      next.volume = normalizeSpaces(volumeFallback).replace(/[^\dA-Za-z\uac00-\ud7a3-]/g, "");
+    }
+    if (issueFallback && !next.issue) {
+      next.issue = normalizeSpaces(issueFallback).replace(/[^\dA-Za-z\uac00-\ud7a3-]/g, "");
+    }
+    if (!next.titleMain && (title || titleFallback)) {
+      Object.assign(next, splitTitle(title || titleFallback));
     }
 
     return next;

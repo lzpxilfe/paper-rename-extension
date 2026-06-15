@@ -11,6 +11,7 @@ const filenameModule = globalThis.PaperRenameFilename;
 
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
+const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
 
 function hasChromeApi(path) {
   let current = typeof chrome !== "undefined" ? chrome : null;
@@ -62,6 +63,44 @@ function cleanupContexts(now) {
   pendingContexts = pendingContexts
     .filter((entry) => entry && entry.context && currentTime - entry.context.capturedAt < constants.CONTEXT_TTL_MS)
     .slice(-constants.MAX_CONTEXTS);
+}
+
+function hasContextMetadata(context) {
+  const metadata = context && context.metadata;
+  if (!metadata) {
+    return false;
+  }
+  const authors = Array.isArray(metadata.authors) ? metadata.authors : [];
+  return Boolean(metadata.titleMain && (authors.length || metadata.journalName || metadata.publisher || metadata.year));
+}
+
+function persistContexts() {
+  if (!hasChromeApi(["storage", "local", "set"])) {
+    return;
+  }
+  chrome.storage.local.set({
+    [RECENT_CONTEXTS_STORAGE_KEY]: pendingContexts
+  }, () => {
+    consumeLastError();
+  });
+}
+
+function restoreContexts(callback) {
+  const done = typeof callback === "function" ? callback : () => {};
+  if (!hasChromeApi(["storage", "local", "get"])) {
+    done();
+    return;
+  }
+  chrome.storage.local.get(RECENT_CONTEXTS_STORAGE_KEY, (result) => {
+    const stored = result && Array.isArray(result[RECENT_CONTEXTS_STORAGE_KEY])
+      ? result[RECENT_CONTEXTS_STORAGE_KEY]
+      : [];
+    if (stored.length) {
+      pendingContexts = stored.concat(pendingContexts).slice(-constants.MAX_CONTEXTS);
+      cleanupContexts(Date.now());
+    }
+    done();
+  });
 }
 
 function normalizeUrl(value) {
@@ -135,11 +174,12 @@ function chooseContextEntry(downloadItem, nowValue) {
     return null;
   }
   pendingContexts = pendingContexts.filter((entry) => entry !== best.entry);
+  persistContexts();
   return best.entry;
 }
 
 function rememberContext(context, sender) {
-  if (!context || !context.metadata) {
+  if (!context || !hasContextMetadata(context)) {
     return;
   }
   const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : -1;
@@ -149,6 +189,18 @@ function rememberContext(context, sender) {
   });
   pendingContexts.push({ context: next, tabId, frameId });
   cleanupContexts(Date.now());
+  persistContexts();
+}
+
+function findContextEntry(downloadItem, callback) {
+  const first = chooseContextEntry(downloadItem);
+  if (first || !hasChromeApi(["storage", "local", "get"])) {
+    callback(first);
+    return;
+  }
+  restoreContexts(() => {
+    callback(chooseContextEntry(downloadItem));
+  });
 }
 
 function registerChromeListeners() {
@@ -159,6 +211,7 @@ function registerChromeListeners() {
   chrome.runtime.onInstalled.addListener(() => loadSettings());
   chrome.runtime.onStartup.addListener(() => loadSettings());
   loadSettings();
+  restoreContexts();
 
   if (hasChromeApi(["storage", "onChanged"])) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -182,18 +235,19 @@ function registerChromeListeners() {
         suggest();
         return;
       }
-      const entry = chooseContextEntry(downloadItem);
-      if (!entry || !entry.context || !entry.context.metadata) {
-        suggest();
-        return;
-      }
-      const metadata = Object.assign({}, entry.context.metadata, {
-        originalFilename: entry.context.metadata.originalFilename || entry.context.originalFilename
-      });
-      const filename = filenameModule.renderFilename(metadata, settingsCache, downloadItem);
-      suggest({
-        filename,
-        conflictAction: "uniquify"
+      findContextEntry(downloadItem, (entry) => {
+        if (!entry || !entry.context || !entry.context.metadata) {
+          suggest();
+          return;
+        }
+        const metadata = Object.assign({}, entry.context.metadata, {
+          originalFilename: entry.context.metadata.originalFilename || entry.context.originalFilename
+        });
+        const filename = filenameModule.renderFilename(metadata, settingsCache, downloadItem);
+        suggest({
+          filename,
+          conflictAction: "uniquify"
+        });
       });
     });
   }
@@ -218,8 +272,11 @@ if (typeof module !== "undefined" && module.exports) {
     chooseContextEntry,
     cleanupContexts,
     contextScore,
+    findContextEntry,
+    hasContextMetadata,
     loadSettings,
     rememberContext,
+    restoreContexts,
     updateActionState
   };
 }

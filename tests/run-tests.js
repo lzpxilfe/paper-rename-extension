@@ -126,6 +126,33 @@ test("author cleanup removes romanization and duplicate affiliation numbers", ()
   assert.deepEqual(metadata.splitAuthors("이차원 Lee ChaWon 1·이차원 Lee ChaWon 1"), ["이차원"]);
 });
 
+test("RISS thesis detail facts extract Korean labels and thesis publisher", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head><title>RISS 학위논문</title></head>
+    <body>
+      <div class="locationW">학위논문</div>
+      <section id="thesisInfoDiv">
+        <h3 class="title">백제 한성기 몽촌토성의 축조 목적과 기능</h3>
+        <div class="infoDetailL">
+          <ul>
+            <li><span class="strong">저자</span> 이차원</li>
+            <li><span class="strong">학위논문사항</span> 서울시립대학교 일반대학원, 국사학과, 국내석사, 2025</li>
+            <li><span class="strong">발행년도</span> 2025</li>
+          </ul>
+        </div>
+      </section>
+    </body>
+    </html>
+  `, "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=be54d9b8bc7cdb09");
+
+  assert.deepEqual(actual.authors, ["이차원"]);
+  assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 축조 목적과 기능");
+  assert.equal(actual.publisher, "서울시립대학교 일반대학원 국사학과 석사학위논문");
+  assert.equal(actual.year, "2025");
+});
+
 test("background chooses the nearest same-tab context", () => {
   background._state.reset();
   const now = Date.now();
@@ -181,6 +208,24 @@ test("background accepts one recent context for viewer-mediated downloads", () =
 
   assert.ok(entry);
   assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
+});
+
+test("background ignores blank viewer contexts", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/Search.do?query=test",
+    capturedAt: now
+  }, { tab: { id: 7 }, frameId: 0 });
+  background.rememberContext({
+    metadata: metadata.blankMetadata("RISS", "https://viewer.riss.kr"),
+    pageUrl: "https://viewer.riss.kr",
+    capturedAt: now + 1000
+  }, { tab: { id: 9 }, frameId: 0 });
+
+  assert.equal(background._state.pendingContexts.length, 1);
+  assert.equal(background._state.pendingContexts[0].context.metadata.titleMain, fullMeta.titleMain);
 });
 
 test("KCI realistic page prefers citation metadata over UI button text", () => {

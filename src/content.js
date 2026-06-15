@@ -14,6 +14,13 @@
 
   let lastMetadata = null;
 
+  const DOWNLOAD_TEXT_PATTERN_EXTRA = /(?:\uc6d0\ubb38|\ubcf8\ubb38|\ub2e4\uc6b4\ub85c\ub4dc|\ub0b4\ub824\ubc1b\uae30|\ud30c\uc77c)/i;
+  const DOWNLOAD_SOURCE_PATTERN_EXTRA = /(?:viewer|view|\uc6d0\ubb38|\ubcf8\ubb38|\ub2e4\uc6b4\ub85c\ub4dc|\ub0b4\ub824\ubc1b\uae30|\ud30c\uc77c)/i;
+
+  function matchesPattern(pattern, extraPattern, value) {
+    return pattern.test(value) || extraPattern.test(value);
+  }
+
   function normalizeSpaces(value) {
     return metadataModule.normalizeSpaces(value);
   }
@@ -72,13 +79,15 @@
     }
     const text = controlText(control);
     const source = sourceText(control);
-    if (DOWNLOAD_TEXT_PATTERN.test(text) && DOWNLOAD_SOURCE_PATTERN.test(`${text} ${source}`)) {
+    if (matchesPattern(DOWNLOAD_TEXT_PATTERN, DOWNLOAD_TEXT_PATTERN_EXTRA, text) &&
+      matchesPattern(DOWNLOAD_SOURCE_PATTERN, DOWNLOAD_SOURCE_PATTERN_EXTRA, `${text} ${source}`)) {
       return true;
     }
     if (/\.pdf(?:[?#]|$)/i.test(source)) {
       return true;
     }
-    if (DOWNLOAD_SOURCE_PATTERN.test(source) && /(?:a|button|input)/i.test(control.tagName || "")) {
+    if (matchesPattern(DOWNLOAD_SOURCE_PATTERN, DOWNLOAD_SOURCE_PATTERN_EXTRA, source) &&
+      /(?:a|button|input|select|option)/i.test(control.tagName || "")) {
       return true;
     }
     return false;
@@ -155,6 +164,34 @@
     return lastMetadata || metadataModule.blankMetadata(metadataModule.detectSource(location.href), location.href);
   }
 
+  function hasUsefulMetadata(metadata) {
+    if (!metadata) {
+      return false;
+    }
+    const authors = Array.isArray(metadata.authors) ? metadata.authors : [];
+    return Boolean(metadata.titleMain && (authors.length || metadata.journalName || metadata.publisher || metadata.year));
+  }
+
+  function isRissSearchPage(metadata) {
+    return metadata && metadata.source === constants.SOURCES.RISS && /\/search\//i.test(location.pathname);
+  }
+
+  function shouldUseScopedMetadata(current, scoped) {
+    if (!hasUsefulMetadata(scoped)) {
+      return false;
+    }
+    if (!hasUsefulMetadata(current)) {
+      return true;
+    }
+    if (isRissSearchPage(current)) {
+      return true;
+    }
+    if ((current.source || scoped.source) === constants.SOURCES.KCI) {
+      return false;
+    }
+    return false;
+  }
+
   function nearbyContainer(control) {
     if (!control || !control.closest) {
       return null;
@@ -188,7 +225,7 @@
     const container = nearbyContainer(control);
     const text = container ? container.innerText || container.textContent || "" : "";
     const scoped = metadataModule.parseResultText(text, current.source || metadataModule.detectSource(location.href), location.href);
-    if (scoped && (scoped.titleMain || scoped.authors.length || scoped.journalName || scoped.year)) {
+    if (shouldUseScopedMetadata(current, scoped)) {
       return Object.assign({}, current, Object.fromEntries(
         Object.entries(scoped).filter(([, value]) => Array.isArray(value) ? value.length > 0 : Boolean(value))
       ));
@@ -202,6 +239,9 @@
     }
     const downloadUrl = downloadUrlFromControl(control);
     const metadata = metadataFromControl(control);
+    if (!hasUsefulMetadata(metadata)) {
+      return;
+    }
     const context = {
       metadata: Object.assign({}, metadata, {
         originalFilename: metadata.originalFilename || originalFilenameFromControl(control, downloadUrl)
@@ -221,7 +261,7 @@
   }
 
   function handlePossibleDownload(event) {
-    const control = safeClosest(event.target, "a, button, input, [role='button'], [onclick], [data-url], [data-href], [data-file]");
+    const control = safeClosest(event.target, "a, button, input, select, option, [role='button'], [tabindex], [onclick], [data-url], [data-href], [data-file], [class*='down'], [class*='file'], [class*='full']");
     if (!isLikelyDownloadControl(control)) {
       return;
     }
@@ -256,6 +296,7 @@
   document.addEventListener("pointerdown", handlePossibleDownload, true);
   document.addEventListener("mousedown", handlePossibleDownload, true);
   document.addEventListener("click", handlePossibleDownload, true);
+  document.addEventListener("change", handlePossibleDownload, true);
   document.addEventListener("keydown", handleKeyboard, true);
 
   getCurrentMetadata();
