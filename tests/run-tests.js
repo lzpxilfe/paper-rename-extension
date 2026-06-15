@@ -655,4 +655,33 @@ test("default template does not end with pages field", () => {
   assert.notEqual(lastToken.value, "pages");
 });
 
+test("isAcademicMainPage returns true for main page URLs and yields empty metadata", () => {
+  const rissMain = "https://www.riss.kr/index.do";
+  const rissProxyMain = "https://www-riss-kr-ssl.openlib.uos.ac.kr/";
+  
+  const doc = {
+    title: "RISS(리스,학술연구정보서비스) 국내·국외 학술정보를 제공하는 대국민 서비스",
+    documentElement: { textContent: "Copyright KERIS. ALL RIGHTS RESERVED." },
+    body: { textContent: "Copyright KERIS. ALL RIGHTS RESERVED." }
+  };
+  
+  const parsed1 = metadata.extractFromDocument(doc, rissMain);
+  assert.equal(parsed1.titleMain, "");
+  assert.deepEqual(parsed1.authors, []);
+  
+  const parsed2 = metadata.extractFromDocument(doc, rissProxyMain);
+  assert.equal(parsed2.titleMain, "");
+  assert.deepEqual(parsed2.authors, []);
+});
+
+test("isUsableTitle and cleanAuthorName filters copyright and site promo texts", () => {
+  const doc = {
+    title: "Copyright KERIS. ALL RIGHTS RESERVED.",
+    documentElement: { textContent: "Copyright KERIS. ALL RIGHTS RESERVED." }
+  };
+  const parsed = metadata.extractFromDocument(doc, "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1");
+  assert.equal(parsed.titleMain, "");
+  assert.deepEqual(parsed.authors, []);
+});
+
 module.exports = Promise.all(pendingTests);

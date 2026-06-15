@@ -153,6 +153,9 @@
     let text = cleanValue(value)
       .replace(/\s+\d+$/g, "")
       .replace(/\s*\^\{\d+\}\s*$/g, "");
+    if (/(?:Copyright|rights\s*reserved|KERIS|학술연구|대국민\s*서비스)/i.test(text)) {
+      return "";
+    }
     const koreanSafe = text.match(/[\uac00-\ud7a3]{2,}(?:\s*[\u00b7\u318d]\s*[\uac00-\ud7a3]{2,})*/);
     if (koreanSafe) {
       text = koreanSafe[0];
@@ -941,6 +944,27 @@
     };
   }
 
+  function isAcademicMainPage(url) {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname;
+      const path = parsed.pathname.toLowerCase();
+      if (/riss/i.test(host) && (path === "/" || path === "/index.do")) return true;
+      if (/dbpia/i.test(host) && (path === "/" || path === "/index.do")) return true;
+      if (/kiss.*kstudy/i.test(host) && (path === "/" || path === "/index" || path === "/index.do")) return true;
+      if (/kci\.go\.kr/i.test(host) && (path === "/" || path === "/kciportal/main.kci" || path === "/kciportal/land.kci")) return true;
+      if (/earticle/i.test(host) && (path === "/" || path === "/index.html")) return true;
+      if (/scholar.*kyobobook/i.test(host) && (path === "/" || path === "/main.ink")) return true;
+      if (/scienceon/i.test(host) && (path === "/" || path === "/main/mainform.do")) return true;
+      if (/scholar\.google/i.test(host) && (path === "/" || path === "/schhp")) return true;
+      if (path === "/" || path === "/index.html" || path === "/index.do" || path === "/main.do") {
+        return true;
+      }
+    } catch (_e) {}
+    return false;
+  }
+
   function detectSource(url) {
     let parsed;
     try {
@@ -1006,6 +1030,9 @@
   function isUsableTitle(value) {
     const text = cleanValue(value);
     if (/(?:RISS\s*\uac80\uc0c9|\ud1b5\ud569\uac80\uc0c9|\uac80\uc0c9\uacb0\uacfc|KCI\s*\uc6d0\ubb38|\ub17c\ubb38\uc815\ubcf4|\ucd08\ub85d\s*\uc5f4\uae30\s*\ub2eb\uae30\s*\ubc84\ud2bc|\uc6d0\ubb38\s*\ub0b4\ub824\ubc1b\uae30)/i.test(text)) {
+      return false;
+    }
+    if (/(?:Copyright|rights\s*reserved|KERIS|학술연구정보서비스|대국민\s*서비스|국내·국외\s*학술정보)/i.test(text)) {
       return false;
     }
     if (text.length < 4 || text.length > 180) {
@@ -1231,6 +1258,9 @@
     const source = detectSource(pageUrl);
     let meta = blankMetadata(source, pageUrl);
     if (!doc) {
+      return meta;
+    }
+    if (isAcademicMainPage(pageUrl)) {
       return meta;
     }
 
