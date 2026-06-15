@@ -27,6 +27,7 @@
   // 한 번의 클릭에서 pointerdown → click 순으로 두 번 발화하는 문제를 주방하는 debounce 간격
   const CONTEXT_SEND_DEBOUNCE_MS = 300;
   let lastContextSentAt = 0;
+  let runtimeInvalidated = false;
 
   const DOWNLOAD_TEXT_PATTERN_EXTRA = /(?:\uc6d0\ubb38|\ubcf8\ubb38|\ub2e4\uc6b4\ub85c\ub4dc|\ub0b4\ub824\ubc1b\uae30|\ud30c\uc77c)/i;
   const DOWNLOAD_SOURCE_PATTERN_EXTRA = /(?:viewer|view|\uc6d0\ubb38|\ubcf8\ubb38|\ub2e4\uc6b4\ub85c\ub4dc|\ub0b4\ub824\ubc1b\uae30|\ud30c\uc77c)/i;
@@ -342,13 +343,40 @@
     return next;
   }
 
-  function sendContext(context) {
-    chrome.runtime.sendMessage({
-      type: constants.MESSAGES.DOWNLOAD_CONTEXT,
-      context
-    }, () => {
+  function markRuntimeInvalidated(error) {
+    const message = error && error.message ? error.message : String(error || "");
+    if (/Extension context invalidated|context invalidated/i.test(message)) {
+      runtimeInvalidated = true;
+    }
+  }
+
+  function consumeRuntimeLastError() {
+    try {
       void chrome.runtime.lastError;
-    });
+    } catch (error) {
+      markRuntimeInvalidated(error);
+    }
+  }
+
+  function canUseRuntimeMessaging() {
+    return !runtimeInvalidated &&
+      typeof chrome !== "undefined" &&
+      chrome.runtime &&
+      typeof chrome.runtime.sendMessage === "function";
+  }
+
+  function sendContext(context) {
+    if (!canUseRuntimeMessaging()) {
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage({
+        type: constants.MESSAGES.DOWNLOAD_CONTEXT,
+        context
+      }, consumeRuntimeLastError);
+    } catch (error) {
+      markRuntimeInvalidated(error);
+    }
   }
 
   function detailUrlFromContainer(container) {
@@ -400,7 +428,7 @@
   }
 
   function sendDownloadContext(control) {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+    if (!canUseRuntimeMessaging()) {
       return;
     }
     // debounce: pointerdown → click 연속 발화 시 중복 전송 방지
@@ -447,23 +475,29 @@
     handlePossibleDownload(event);
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!message || message.type !== constants.MESSAGES.GET_PAGE_INFO) {
-      return false;
-    }
-    try {
-      sendResponse({
-        success: true,
-        metadata: getCurrentMetadata()
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (!message || message.type !== constants.MESSAGES.GET_PAGE_INFO) {
+          return false;
+        }
+        try {
+          sendResponse({
+            success: true,
+            metadata: getCurrentMetadata()
+          });
+        } catch (error) {
+          sendResponse({
+            success: false,
+            error: error && error.message ? error.message : String(error)
+          });
+        }
+        return true;
       });
-    } catch (error) {
-      sendResponse({
-        success: false,
-        error: error && error.message ? error.message : String(error)
-      });
     }
-    return true;
-  });
+  } catch (error) {
+    markRuntimeInvalidated(error);
+  }
 
   document.addEventListener("pointerdown", handlePossibleDownload, true);
   document.addEventListener("click", handlePossibleDownload, true);
