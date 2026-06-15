@@ -552,16 +552,26 @@ footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .preset-head label {
   font-weight: 700;
   color: var(--muted);
   font-size: 12.5px;
+  white-space: nowrap;
 }
 
-.preset-head select {
+.preset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-grow: 1;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.preset-controls select {
   height: 30px;
   padding: 0 8px;
   font-size: 12px;
@@ -571,10 +581,49 @@ footer {
   color: var(--text);
   cursor: pointer;
   outline: none;
-  max-width: 250px;
+  max-width: 210px;
+  min-width: 140px;
+  flex-grow: 1;
 }
 
-.preset-head select:focus {
+.preset-controls select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.preset-controls button {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.preset-controls button:hover {
+  background: var(--bg);
+}
+
+#save-preset {
+  border-color: #bac8ff;
+  background: #edf2ff;
+  color: #364fc7;
+}
+
+#save-preset:hover {
+  background: #d0ebff;
+}
+
+#delete-preset {
+  border-color: #ffc9c9;
+  background: #fff5f5;
+  color: #fa5252;
+}
+
+#delete-preset:hover {
+  background: #ffe3e3;
 }

@@ -48,11 +48,6 @@
   marker.className = "insert-marker";
 
   const els = {};
-
-  function clone(value) {
-    return JSON.parse(JSON.stringify(value));
-  }
-
   const PRESETS = {
     default: {
       template: [
@@ -86,17 +81,66 @@
       ],
       includePages: false
     },
+    apa: {
+      template: [
+        { kind: "field", value: "authors" },
+        { kind: "separator", value: "space" },
+        { kind: "separator", value: "openParen" },
+        { kind: "field", value: "year" },
+        { kind: "separator", value: "closeParen" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "title" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "journal" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "volumeIssue" }
+      ],
+      includePages: false
+    },
+    chicago: {
+      template: [
+        { kind: "field", value: "authors" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "year" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "title" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "journal" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "volumeIssue" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "publisher" }
+      ],
+      includePages: false
+    },
+    ieee: {
+      template: [
+        { kind: "field", value: "authors" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "title" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "journal" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "volumeIssue" },
+        { kind: "separator", value: "commaSpace" },
+        { kind: "field", value: "year" }
+      ],
+      includePages: false
+    },
     "year-first": {
       template: [
         { kind: "field", value: "year" },
-        { kind: "separator", value: "underscore" },
+        { kind: "separator", value: "commaSpace" },
         { kind: "field", value: "authors" },
-        { kind: "separator", value: "underscore" },
+        { kind: "separator", value: "commaSpace" },
         { kind: "field", value: "title" }
       ],
       includePages: false
     }
   };
+
+  let customPresets = {};
+  const CUSTOM_PRESETS_STORAGE_KEY = "paperRenameCustomPresets";
 
   function isSameTemplate(left, right) {
     if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
@@ -112,6 +156,28 @@
     });
   }
 
+  function renderPresetSelectOptions() {
+    if (!els.presetSelect) return;
+    const existingGroup = document.getElementById("custom-presets-group");
+    if (existingGroup) {
+      existingGroup.remove();
+    }
+    const keys = Object.keys(customPresets);
+    if (keys.length === 0) return;
+
+    const group = document.createElement("optgroup");
+    group.id = "custom-presets-group";
+    group.label = "사용자 지정 프리셋";
+
+    keys.forEach((key) => {
+      const opt = document.createElement("option");
+      opt.value = `custom_${key}`;
+      opt.textContent = key;
+      group.appendChild(opt);
+    });
+    els.presetSelect.appendChild(group);
+  }
+
   function syncPresetSelect() {
     if (!els.presetSelect) return;
     let found = "custom";
@@ -121,7 +187,19 @@
         break;
       }
     }
+    if (found === "custom") {
+      for (const [key, preset] of Object.entries(customPresets)) {
+        if (isSameTemplate(settings.template, preset.template) && settings.includePages === preset.includePages) {
+          found = `custom_${key}`;
+          break;
+        }
+      }
+    }
     els.presetSelect.value = found;
+
+    if (els.deletePresetBtn) {
+      els.deletePresetBtn.style.display = found.startsWith("custom_") ? "inline-block" : "none";
+    }
   }
 
   function tokenLabel(token) {
@@ -345,7 +423,7 @@
   }
 
   function addToken(token, index) {
-    const next = clone(token);
+    const next = filename.clone(token);
     const insertAt = Number.isInteger(index) ? index : settings.template.length;
     settings.template.splice(Math.max(0, Math.min(insertAt, settings.template.length)), 0, next);
     renderRecipe();
@@ -389,7 +467,7 @@
       chip.dataset.index = String(index);
       chip.textContent = tokenLabel(token);
       chip.addEventListener("dragstart", (event) => {
-        dragState = { source: "recipe", index, token: clone(token) };
+        dragState = { source: "recipe", index, token: filename.clone(token) };
         chip.classList.add("dragging");
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", tokenLabel(token));
@@ -425,7 +503,7 @@
       button.textContent = token.label || tokenLabel(token);
       button.addEventListener("click", () => addToken(token));
       button.addEventListener("dragstart", (event) => {
-        dragState = { source: "palette", token: clone(token) };
+        dragState = { source: "palette", token: filename.clone(token) };
         button.classList.add("dragging");
         event.dataTransfer.effectAllowed = "copy";
         event.dataTransfer.setData("text/plain", tokenLabel(token));
@@ -527,13 +605,15 @@
       syncPresetSelect();
       return;
     }
-    chrome.storage.sync.get(constants.SETTINGS_STORAGE_KEY, (result) => {
+    chrome.storage.sync.get([constants.SETTINGS_STORAGE_KEY, CUSTOM_PRESETS_STORAGE_KEY], (result) => {
       settings = filename.safeSettings(result && result[constants.SETTINGS_STORAGE_KEY]);
+      customPresets = (result && result[CUSTOM_PRESETS_STORAGE_KEY]) || {};
       syncStaticInputs();
       renderRecipe();
       updateEnabledUi();
       syncMetaInputs();
       loadActiveTabMetadata();
+      renderPresetSelectOptions();
       syncPresetSelect();
     });
   }
@@ -561,13 +641,65 @@
       els.presetSelect.addEventListener("change", () => {
         const val = els.presetSelect.value;
         if (val === "custom") return;
-        const preset = PRESETS[val];
+        let preset = PRESETS[val];
+        if (!preset && val.startsWith("custom_")) {
+          const customKey = val.replace("custom_", "");
+          preset = customPresets[customKey];
+        }
         if (preset) {
-          settings.template = clone(preset.template);
+          settings.template = filename.clone(preset.template);
           settings.includePages = preset.includePages;
           syncStaticInputs();
           renderRecipe();
           save();
+        }
+      });
+    }
+
+    if (els.savePresetBtn) {
+      els.savePresetBtn.addEventListener("click", () => {
+        const name = prompt("새 프리셋 이름을 입력해 주세요:");
+        if (!name) return;
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        if (PRESETS[trimmed] || trimmed === "custom") {
+          alert("기본 프리셋 이름과 겹칠 수 없습니다.");
+          return;
+        }
+        customPresets[trimmed] = {
+          template: filename.clone(settings.template),
+          includePages: settings.includePages
+        };
+        if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.sync) {
+          chrome.storage.sync.set({ [CUSTOM_PRESETS_STORAGE_KEY]: customPresets }, () => {
+            renderPresetSelectOptions();
+            syncPresetSelect();
+          });
+        } else {
+          renderPresetSelectOptions();
+          syncPresetSelect();
+        }
+      });
+    }
+
+    if (els.deletePresetBtn) {
+      els.deletePresetBtn.addEventListener("click", () => {
+        const val = els.presetSelect.value;
+        if (!val.startsWith("custom_")) return;
+        const customKey = val.replace("custom_", "");
+        if (confirm(`'${customKey}' 프리셋을 삭제하시겠습니까?`)) {
+          delete customPresets[customKey];
+          if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.set({ [CUSTOM_PRESETS_STORAGE_KEY]: customPresets }, () => {
+              renderPresetSelectOptions();
+              els.presetSelect.value = "custom";
+              syncPresetSelect();
+            });
+          } else {
+            renderPresetSelectOptions();
+            els.presetSelect.value = "custom";
+            syncPresetSelect();
+          }
         }
       });
     }
@@ -583,6 +715,8 @@
     els.enabledLabel = document.getElementById("enabled-label");
     els.academicWarning = document.getElementById("academic-warning");
     els.presetSelect = document.getElementById("preset-select");
+    els.savePresetBtn = document.getElementById("save-preset");
+    els.deletePresetBtn = document.getElementById("delete-preset");
     els.pageSource = document.getElementById("page-source");
     els.previewOutput = document.getElementById("preview-output");
     els.recipeList = document.getElementById("recipe-list");
