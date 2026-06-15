@@ -93,6 +93,25 @@
       case "volumeIssue":
         return volumeIssueText(source);
       case "publisher":
+        if (source.thesisInstitution) {
+          const inst = source.thesisInstitution;
+          const dept = source.thesisDept;
+          const deg = source.thesisDegree;
+          const mode = (settings && settings.thesisDeptMode) || "paren";
+          
+          let formatted = inst;
+          if (dept) {
+            if (mode === "paren") {
+              formatted += ` (${dept})`;
+            } else if (mode === "plain") {
+              formatted += ` ${dept}`;
+            }
+          }
+          if (deg) {
+            formatted += ` ${deg}`;
+          }
+          return normalizeSpaces(formatted);
+        }
         return normalizeSpaces(source.publisher);
       case "pages":
         return pageRangeText(source, settings);

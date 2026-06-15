@@ -26,7 +26,8 @@
     enabled: true,
     includePages: false,
     maxFilenameLength: 180,
-    template: null
+    template: null,
+    thesisDeptMode: "paren"
   };
 
   const ACTION = {

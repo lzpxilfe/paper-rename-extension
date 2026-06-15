@@ -315,6 +315,25 @@ h2 {
   border-radius: 6px;
 }
 
+.select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.select-row select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+
 footer {
   display: flex;
   align-items: center;

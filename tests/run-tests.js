@@ -158,6 +158,37 @@ test("default filename matches requested RISS thesis filename", () => {
   assert.equal(actual, "이차원, 2025, 『백제 한성기 몽촌토성의 축조 목적과 기능』, 서울시립대학교 국사학과 석사학위논문.pdf");
 });
 
+test("thesisDeptMode changes thesis publisher formatting", () => {
+  const meta = {
+    authors: ["백혜림"],
+    titleMain: "禮山 伽倻寺址 伽藍 變遷 硏究",
+    thesisInstitution: "서울시립대학교",
+    thesisDept: "국사학과",
+    thesisDegree: "석사학위논문",
+    publisher: "서울시립대학교 국사학과 석사학위논문",
+    year: "2025",
+    originalFilename: "article.pdf"
+  };
+
+  const actualParen = filename.renderFilename(
+    meta,
+    Object.assign({}, filename.safeSettings(), { thesisDeptMode: "paren" })
+  );
+  assert.equal(actualParen, "백혜림, 2025, 『禮山 伽倻寺址 伽藍 變遷 硏究』, 서울시립대학교 (국사학과) 석사학위논문.pdf");
+
+  const actualPlain = filename.renderFilename(
+    meta,
+    Object.assign({}, filename.safeSettings(), { thesisDeptMode: "plain" })
+  );
+  assert.equal(actualPlain, "백혜림, 2025, 『禮山 伽倻寺址 伽藍 變遷 硏究』, 서울시립대학교 국사학과 석사학위논문.pdf");
+
+  const actualNone = filename.renderFilename(
+    meta,
+    Object.assign({}, filename.safeSettings(), { thesisDeptMode: "none" })
+  );
+  assert.equal(actualNone, "백혜림, 2025, 『禮山 伽倻寺址 伽藍 變遷 硏究』, 서울시립대학교 석사학위논문.pdf");
+});
+
 test("author cleanup removes romanization and duplicate affiliation numbers", () => {
   assert.deepEqual(metadata.splitAuthors("이차원 Lee ChaWon 1·이차원 Lee ChaWon 1"), ["이차원"]);
 });
@@ -186,6 +217,9 @@ test("RISS thesis detail facts extract Korean labels and thesis publisher", () =
   assert.deepEqual(actual.authors, ["이차원"]);
   assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 축조 목적과 기능");
   assert.equal(actual.publisher, "서울시립대학교 국사학과 석사학위논문");
+  assert.equal(actual.thesisInstitution, "서울시립대학교");
+  assert.equal(actual.thesisDept, "국사학과");
+  assert.equal(actual.thesisDegree, "석사학위논문");
   assert.equal(actual.year, "2025");
 });
 

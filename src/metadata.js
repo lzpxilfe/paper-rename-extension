@@ -299,10 +299,10 @@
     return "";
   }
 
-  function formatThesisPublisher(value) {
+  function parseThesisDetails(value) {
     const text = cleanValue(value);
     if (!text) {
-      return "";
+      return { institution: "", department: "", degree: "" };
     }
     const parts = text
       .split(/--|,|\||;/)
@@ -321,13 +321,18 @@
     const degreeSource = parts.find((part) => /(?:\uc11d\uc0ac|\ubc15\uc0ac|\ud559\uc704\ub17c\ubb38)/.test(part)) || "";
     let degree = "";
     if (/\ubc15\uc0ac/.test(degreeSource)) {
-      degree = "\ubc15\uc0ac\ud559\uc704\ub17c\ubb38";
+      degree = "박사학위논문";
     } else if (/\uc11d\uc0ac/.test(degreeSource)) {
-      degree = "\uc11d\uc0ac\ud559\uc704\ub17c\ubb38";
+      degree = "석사학위논문";
     } else if (/\ud559\uc704\ub17c\ubb38/.test(degreeSource)) {
       degree = degreeSource;
     }
-    return [institution, department, degree].map(cleanValue).filter(Boolean).join(" ");
+    return { institution, department, degree };
+  }
+
+  function formatThesisPublisher(value) {
+    const parsed = parseThesisDetails(value);
+    return [parsed.institution, parsed.department, parsed.degree].filter(Boolean).join(" ");
   }
 
   function firstText(doc, selectors) {
@@ -874,10 +879,15 @@
     if (!next.journalName && journal) {
       next.journalName = journal;
     }
-    if (!next.publisher && (publisher || thesisInfo)) {
-      next.publisher = thesisInfo
-        ? formatThesisPublisher(thesisInfo)
-        : removeNonKoreanParen(publisher);
+    if (thesisInfo) {
+      const parsedThesis = parseThesisDetails(thesisInfo);
+      next.thesisInstitution = parsedThesis.institution;
+      next.thesisDept = parsedThesis.department;
+      next.thesisDegree = parsedThesis.degree;
+      next.publisher = [parsedThesis.institution, parsedThesis.department, parsedThesis.degree]
+        .filter(Boolean).join(" ");
+    } else if (!next.publisher && publisher) {
+      next.publisher = removeNonKoreanParen(publisher);
     }
     if (!next.year && (year || thesisInfo)) {
       next.year = parseYear(year || thesisInfo);
@@ -924,7 +934,10 @@
       pageLast: "",
       originalFilename: "",
       source: source || SOURCES.UNKNOWN || "unknown",
-      pageUrl: pageUrl || ""
+      pageUrl: pageUrl || "",
+      thesisInstitution: "",
+      thesisDept: "",
+      thesisDegree: ""
     };
   }
 
@@ -1267,7 +1280,10 @@
       "pageLast",
       "originalFilename",
       "source",
-      "pageUrl"
+      "pageUrl",
+      "thesisInstitution",
+      "thesisDept",
+      "thesisDegree"
     ].forEach((key) => {
       next[key] = cleanValue(next[key]);
     });
