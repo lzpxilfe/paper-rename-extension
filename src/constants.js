@@ -28,6 +28,8 @@
     includePages: false,
     maxFilenameLength: 180,
     template: null,
+    titleBracketMode: "single",
+    journalBracketMode: "double",
     thesisDeptMode: "none",
     thesisTitleBracketMode: "double"
   };

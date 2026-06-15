@@ -184,6 +184,31 @@ test("thesisDeptMode changes thesis publisher formatting", () => {
   assert.equal(actualNone, "백혜림, 2025, 『禮山 伽倻寺址 伽藍 變遷 硏究』, 서울시립대학교 석사학위논문.pdf");
 });
 
+test("article title and journal bracket modes change academic paper brackets", () => {
+  const meta = {
+    authors: ["문상필"],
+    titleMain: "2022 개정 교육과정 분석을 통한 초등학교 인공지능윤리 교육 프로그램 개발",
+    journalName: "한국인공지능교육학회 학술대회",
+    volume: "2022한국인공지능교육학회동계학술대회2022.12",
+    publisher: "한국인공지능교육학회",
+    year: "2022",
+    originalFilename: "paper.pdf"
+  };
+
+  const actual = filename.renderFilename(
+    meta,
+    filename.safeSettings({
+      titleBracketMode: "angle",
+      journalBracketMode: "doubleAngle"
+    })
+  );
+
+  assert.equal(
+    actual,
+    "문상필, 2022, 〈2022 개정 교육과정 분석을 통한 초등학교 인공지능윤리 교육 프로그램 개발〉, ≪한국인공지능교육학회 학술대회≫ 2022한국인공지능교육학회동계학술대회2022.12, 한국인공지능교육학회.pdf"
+  );
+});
+
 test("thesisTitleBracketMode changes thesis title brackets", () => {
   const meta = {
     authors: ["홍길동"],

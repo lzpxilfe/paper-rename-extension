@@ -703,6 +703,18 @@
         }
       });
     }
+    if (els.titleBracketMode) {
+      els.titleBracketMode.addEventListener("change", () => {
+        settings.titleBracketMode = els.titleBracketMode.value;
+        save();
+      });
+    }
+    if (els.journalBracketMode) {
+      els.journalBracketMode.addEventListener("change", () => {
+        settings.journalBracketMode = els.journalBracketMode.value;
+        save();
+      });
+    }
     if (els.thesisDeptMode) {
       els.thesisDeptMode.addEventListener("change", () => {
         settings.thesisDeptMode = els.thesisDeptMode.value;
@@ -720,6 +732,12 @@
   function syncStaticInputs() {
     els.includePages.checked = Boolean(settings.includePages);
     els.maxLength.value = String(settings.maxFilenameLength || 180);
+    if (els.titleBracketMode) {
+      els.titleBracketMode.value = settings.titleBracketMode || "single";
+    }
+    if (els.journalBracketMode) {
+      els.journalBracketMode.value = settings.journalBracketMode || "double";
+    }
     if (els.thesisDeptMode) {
       els.thesisDeptMode.value = settings.thesisDeptMode || "none";
     }
@@ -744,6 +762,8 @@
     els.maxLength = document.getElementById("max-length");
     els.resetTemplate = document.getElementById("reset-template");
     els.status = document.getElementById("save-status");
+    els.titleBracketMode = document.getElementById("title-bracket-mode");
+    els.journalBracketMode = document.getElementById("journal-bracket-mode");
     els.thesisDeptMode = document.getElementById("thesis-dept-mode");
     els.thesisTitleBracketMode = document.getElementById("thesis-title-bracket-mode");
 

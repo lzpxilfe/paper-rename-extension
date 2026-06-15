@@ -36,21 +36,30 @@
     return preferred.join("\u00b7");
   }
 
-  function thesisTitleBrackets(settings) {
-    const mode = (settings && settings.thesisTitleBracketMode) || "double";
-    if (mode === "none") {
+  function bracketPair(mode, defaultMode) {
+    const activeMode = mode || defaultMode;
+    if (activeMode === "none") {
       return null;
     }
-    if (mode === "single") {
+    if (activeMode === "single") {
       return ["\u300c", "\u300d"];
     }
-    if (mode === "angle") {
+    if (activeMode === "angle") {
       return ["\u3008", "\u3009"];
     }
-    if (mode === "doubleAngle") {
+    if (activeMode === "doubleAngle") {
       return ["\u226a", "\u226b"];
     }
     return ["\u300e", "\u300f"];
+  }
+
+  function thesisTitleBrackets(settings) {
+    return bracketPair(settings && settings.thesisTitleBracketMode, "double");
+  }
+
+  function bracketedText(text, brackets) {
+    const clean = stripPdfExtension(text);
+    return brackets ? `${brackets[0]}${clean}${brackets[1]}` : clean;
   }
 
   function titleText(meta, settings) {
@@ -61,21 +70,15 @@
     }
     const title = sub ? `${main}: ${sub}` : main || sub;
     const isThesis = meta && meta.publisher && /학위논문/.test(meta.publisher);
-    if (isThesis) {
-      const brackets = thesisTitleBrackets(settings);
-      if (!brackets) {
-        return stripPdfExtension(title);
-      }
-      return `${brackets[0]}${stripPdfExtension(title)}${brackets[1]}`;
-    }
-    const openBracket = "\u300c";
-    const closeBracket = "\u300d";
-    return `${openBracket}${stripPdfExtension(title)}${closeBracket}`;
+    const brackets = isThesis
+      ? thesisTitleBrackets(settings)
+      : bracketPair(settings && settings.titleBracketMode, "single");
+    return bracketedText(title, brackets);
   }
 
-  function journalText(meta) {
+  function journalText(meta, settings) {
     const journal = normalizeSpaces(meta && meta.journalName);
-    return journal ? `\u300e${journal}\u300f` : "";
+    return journal ? bracketedText(journal, bracketPair(settings && settings.journalBracketMode, "double")) : "";
   }
 
   function volumeIssueText(meta) {
@@ -113,7 +116,7 @@
       case "title":
         return titleText(source, settings);
       case "journal":
-        return journalText(source);
+        return journalText(source, settings);
       case "volumeIssue":
         return volumeIssueText(source);
       case "publisher":
@@ -165,6 +168,8 @@
 
   const api = {
     asArray,
+    bracketPair,
+    bracketedText,
     compactPunctuation,
     fieldValue,
     joinAuthors,
