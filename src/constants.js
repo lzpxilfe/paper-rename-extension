@@ -27,7 +27,7 @@
     includePages: false,
     maxFilenameLength: 180,
     template: null,
-    thesisDeptMode: "paren"
+    thesisDeptMode: "none"
   };
 
   const ACTION = {
