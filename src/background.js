@@ -115,6 +115,45 @@ function basename(value) {
   return filenameModule.filenameFromUrl(value || "");
 }
 
+function hostnameOf(value) {
+  try {
+    return new URL(String(value || "")).hostname.toLowerCase();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function sameKnownPaperHost(left, right) {
+  const leftHost = hostnameOf(left);
+  const rightHost = hostnameOf(right);
+  if (!leftHost || !rightHost) {
+    return false;
+  }
+  const knownHosts = [
+    /riss/i,
+    /kci\.go\.kr$/i,
+    /kiss\.kstudy\.com$/i,
+    /dbpia\.com$/i,
+    /earticle\.net$/i,
+    /scholar.*kyobobook/i,
+    /koreascience\.or\.kr$/i,
+    /scienceon\.kisti\.re\.kr$/i,
+    /krm\.or\.kr$/i
+  ];
+  return knownHosts.some((pattern) => pattern.test(leftHost) && pattern.test(rightHost));
+}
+
+function isLikelyViewerDownload(downloadItem) {
+  const text = normalizeUrl([
+    downloadItem && downloadItem.url,
+    downloadItem && downloadItem.finalUrl,
+    downloadItem && downloadItem.referrer,
+    downloadItem && downloadItem.tabUrl,
+    downloadItem && downloadItem.filename
+  ].filter(Boolean).join(" "));
+  return /(?:viewer|view|download|down|file|pdf|riss|kci|원문|다운로드)/i.test(text);
+}
+
 function contextScore(entry, downloadItem, now) {
   if (!entry || !entry.context || !downloadItem) {
     return 0;
@@ -136,6 +175,12 @@ function contextScore(entry, downloadItem, now) {
   }
   if (pageUrl && itemReferrer && (itemReferrer === pageUrl || itemReferrer.includes(pageUrl) || pageUrl.includes(itemReferrer))) {
     score += 6;
+  }
+  if (pageUrl && itemUrl && sameKnownPaperHost(pageUrl, itemUrl)) {
+    score += 5;
+  }
+  if (contextUrl && itemUrl && sameKnownPaperHost(contextUrl, itemUrl)) {
+    score += 5;
   }
   if (contextUrl && itemUrl && basename(contextUrl) && itemUrl.includes(basename(contextUrl))) {
     score += 4;
@@ -168,6 +213,17 @@ function chooseContextEntry(downloadItem, nowValue) {
     const age = now - only.context.capturedAt;
     if (age >= 0 && age < 2 * 60 * 1000 && only.context.metadata && only.context.metadata.titleMain) {
       best = { entry: only, score: best ? best.score : 0 };
+    }
+  }
+  if ((!best || best.score < 3) && isLikelyViewerDownload(downloadItem)) {
+    const recent = pendingContexts
+      .filter((entry) => {
+        const age = now - entry.context.capturedAt;
+        return age >= 0 && age < 2 * 60 * 1000 && entry.context.metadata && entry.context.metadata.titleMain;
+      })
+      .sort((left, right) => right.context.capturedAt - left.context.capturedAt)[0];
+    if (recent) {
+      best = { entry: recent, score: 3 };
     }
   }
   if (!best || best.score < 3) {

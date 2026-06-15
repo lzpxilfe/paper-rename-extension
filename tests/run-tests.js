@@ -250,6 +250,39 @@ test("background accepts one recent context for viewer-mediated downloads", () =
   assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
 });
 
+test("background uses newest RISS context when viewer download is delayed", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: Object.assign({}, fullMeta, {
+      titleMain: "검색결과 카드 제목",
+      publisher: "검색결과 기관"
+    }),
+    pageUrl: "https://www.riss.kr/search/Search.do?query=test",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 7 }, frameId: 0 });
+  background.rememberContext({
+    metadata: Object.assign({}, fullMeta, {
+      titleMain: "상세페이지 보강 제목",
+      publisher: "서울시립대학교 국사학과 석사학위논문"
+    }),
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=be54d9b8bc7cdb09",
+    downloadUrl: "",
+    capturedAt: now + 1000
+  }, { tab: { id: 7 }, frameId: 0 });
+
+  const entry = background.chooseContextEntry({
+    tabId: 12,
+    url: "https://viewer.example.test/download",
+    filename: "000000035976_20260615105228"
+  }, now + 30000);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, "상세페이지 보강 제목");
+  assert.equal(entry.context.metadata.publisher, "서울시립대학교 국사학과 석사학위논문");
+});
+
 test("background ignores blank viewer contexts", () => {
   background._state.reset();
   const now = Date.now();
