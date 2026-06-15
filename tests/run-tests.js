@@ -12,6 +12,7 @@ const filename = require("../src/filename.js");
 globalThis.PaperRenameFilename = filename;
 const metadata = require("../src/metadata.js");
 const background = require("../src/background.js");
+const pendingTests = [];
 
 function fixture(name) {
   return fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8");
@@ -19,12 +20,23 @@ function fixture(name) {
 
 function test(name, run) {
   try {
-    run();
+    const result = run();
+    if (result && typeof result.then === "function") {
+      const pending = result.then(() => {
+        console.log(`ok - ${name}`);
+      }).catch((error) => {
+        console.error(`not ok - ${name}`);
+        throw error;
+      });
+      pendingTests.push(pending);
+      return pending;
+    }
     console.log(`ok - ${name}`);
   } catch (error) {
     console.error(`not ok - ${name}`);
     throw error;
   }
+  return undefined;
 }
 
 const fullMeta = {
@@ -283,6 +295,51 @@ test("background uses newest RISS context when viewer download is delayed", () =
   assert.equal(entry.context.metadata.publisher, "서울시립대학교 국사학과 석사학위논문");
 });
 
+test("background waits briefly for enriched RISS context before consuming search context", () => new Promise((resolve, reject) => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: Object.assign({}, fullMeta, {
+      titleMain: "검색결과 카드 제목",
+      publisher: "검색결과 기관",
+      source: "RISS"
+    }),
+    source: "RISS",
+    pageUrl: "https://www.riss.kr/search/Search.do?query=test",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 7 }, frameId: 0 });
+
+  background.findContextEntry({
+    tabId: 12,
+    url: "https://viewer.example.test/download",
+    filename: "000000035976_20260615105228"
+  }, (entry) => {
+    try {
+      assert.ok(entry);
+      assert.equal(entry.context.metadata.titleMain, "상세페이지 보강 제목");
+      assert.equal(entry.context.metadata.publisher, "서울시립대학교 국사학과 석사학위논문");
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+
+  setTimeout(() => {
+    background.rememberContext({
+      metadata: Object.assign({}, fullMeta, {
+        titleMain: "상세페이지 보강 제목",
+        publisher: "서울시립대학교 국사학과 석사학위논문",
+        source: "RISS"
+      }),
+      source: "RISS",
+      pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=be54d9b8bc7cdb09",
+      downloadUrl: "",
+      capturedAt: Date.now()
+    }, { tab: { id: 7 }, frameId: 0 });
+  }, 100);
+}));
+
 test("background ignores blank viewer contexts", () => {
   background._state.reset();
   const now = Date.now();
@@ -379,3 +436,5 @@ fixtureCases.forEach(([file, url, source, title, journal, year]) => {
     assert.ok(actual.authors.length >= 1);
   });
 });
+
+module.exports = Promise.all(pendingTests);

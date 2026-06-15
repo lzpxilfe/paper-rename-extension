@@ -12,6 +12,7 @@ const filenameModule = globalThis.PaperRenameFilename;
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
+const CONTEXT_SETTLE_DELAY_MS = 800;
 
 function hasChromeApi(path) {
   let current = typeof chrome !== "undefined" ? chrome : null;
@@ -198,7 +199,11 @@ function contextScore(entry, downloadItem, now) {
   return score;
 }
 
-function chooseContextEntry(downloadItem, nowValue) {
+function contextAge(entry, now) {
+  return now - (entry && entry.context ? entry.context.capturedAt : 0);
+}
+
+function selectContextEntry(downloadItem, nowValue) {
   const now = Number(nowValue) || Date.now();
   cleanupContexts(now);
   let best = null;
@@ -210,7 +215,7 @@ function chooseContextEntry(downloadItem, nowValue) {
   }
   if ((!best || best.score < 4) && pendingContexts.length === 1) {
     const only = pendingContexts[0];
-    const age = now - only.context.capturedAt;
+    const age = contextAge(only, now);
     if (age >= 0 && age < 2 * 60 * 1000 && only.context.metadata && only.context.metadata.titleMain) {
       best = { entry: only, score: best ? best.score : 0 };
     }
@@ -218,7 +223,7 @@ function chooseContextEntry(downloadItem, nowValue) {
   if ((!best || best.score < 3) && isLikelyViewerDownload(downloadItem)) {
     const recent = pendingContexts
       .filter((entry) => {
-        const age = now - entry.context.capturedAt;
+        const age = contextAge(entry, now);
         return age >= 0 && age < 2 * 60 * 1000 && entry.context.metadata && entry.context.metadata.titleMain;
       })
       .sort((left, right) => right.context.capturedAt - left.context.capturedAt)[0];
@@ -229,9 +234,44 @@ function chooseContextEntry(downloadItem, nowValue) {
   if (!best || best.score < 3) {
     return null;
   }
-  pendingContexts = pendingContexts.filter((entry) => entry !== best.entry);
-  persistContexts();
   return best.entry;
+}
+
+function chooseContextEntry(downloadItem, nowValue) {
+  const bestEntry = selectContextEntry(downloadItem, nowValue);
+  if (!bestEntry) {
+    return null;
+  }
+  pendingContexts = pendingContexts.filter((entry) => entry !== bestEntry);
+  persistContexts();
+  return bestEntry;
+}
+
+function isRissSearchContext(entry) {
+  const context = entry && entry.context;
+  const source = context && (context.source || (context.metadata && context.metadata.source));
+  const pageUrl = context && context.pageUrl;
+  return source === constants.SOURCES.RISS && /\/search\/(?:Search|search|result|Result)/i.test(pageUrl || "");
+}
+
+function shouldWaitForRissEnrichment(entry, downloadItem, nowValue) {
+  if (!entry || !isLikelyViewerDownload(downloadItem) || !isRissSearchContext(entry)) {
+    return false;
+  }
+  const now = Number(nowValue) || Date.now();
+  const age = contextAge(entry, now);
+  return age >= 0 && age < 5000;
+}
+
+function chooseAfterRestore(downloadItem, callback) {
+  const entry = chooseContextEntry(downloadItem);
+  if (entry || !hasChromeApi(["storage", "local", "get"])) {
+    callback(entry);
+    return;
+  }
+  restoreContexts(() => {
+    callback(chooseContextEntry(downloadItem));
+  });
 }
 
 function rememberContext(context, sender) {
@@ -249,14 +289,13 @@ function rememberContext(context, sender) {
 }
 
 function findContextEntry(downloadItem, callback) {
-  const first = chooseContextEntry(downloadItem);
-  if (first || !hasChromeApi(["storage", "local", "get"])) {
-    callback(first);
+  const now = Date.now();
+  const first = selectContextEntry(downloadItem, now);
+  if (shouldWaitForRissEnrichment(first, downloadItem, now)) {
+    setTimeout(() => chooseAfterRestore(downloadItem, callback), CONTEXT_SETTLE_DELAY_MS);
     return;
   }
-  restoreContexts(() => {
-    callback(chooseContextEntry(downloadItem));
-  });
+  chooseAfterRestore(downloadItem, callback);
 }
 
 function registerChromeListeners() {
@@ -333,6 +372,8 @@ if (typeof module !== "undefined" && module.exports) {
     loadSettings,
     rememberContext,
     restoreContexts,
+    selectContextEntry,
+    shouldWaitForRissEnrichment,
     updateActionState
   };
 }
