@@ -412,6 +412,21 @@ test("RISS search result text yields thesis metadata for original-view clicks", 
   assert.equal(actual.year, "2025");
 });
 
+test("RISS search result text without pipes still avoids page-title fallback", () => {
+  const actual = metadata.parseResultText(`
+    RISS 검색 — 통합검색
+    학위논문 1
+    백제 한성기 몽촌토성의 축조 목적과 기능
+    이차원 서울시립대학교 일반대학원 2025 국내석사
+    원문보기 목차검색조회 음성듣기
+  `, "RISS", "https://www.riss.kr/search/Search.do?query=%EB%AA%BD%EC%B4%8C%ED%86%A0%EC%84%B1");
+
+  assert.deepEqual(actual.authors, ["이차원"]);
+  assert.equal(actual.titleMain, "백제 한성기 몽촌토성의 축조 목적과 기능");
+  assert.equal(actual.publisher, "서울시립대학교 일반대학원");
+  assert.equal(actual.year, "2025");
+});
+
 const fixtureCases = [
   ["riss.html", "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1", "RISS", "근대 문학의 매체성과 독자", "한국문학연구", "2025"],
   ["kci.html", "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci", "KCI", "한국 고전 서사의 공간 연구", "고전문학과 해석", "2024"],

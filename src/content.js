@@ -197,22 +197,21 @@
       return null;
     }
     const selectors = [
+      ".item",
+      ".listCont",
+      ".cont",
+      ".box",
+      ".card",
+      "article",
+      "tr",
+      "dl",
+      "li",
+      "section",
       ".srchResultListW",
       ".search-result",
       ".result-list",
       ".result",
-      "[class*='result']",
-      ".listCont",
-      ".cont",
-      "article",
-      "section",
-      ".cont",
-      ".box",
-      ".card",
-      "tr",
-      "dl",
-      "li",
-      "section"
+      "[class*='result']"
     ];
     for (const selector of selectors) {
       const found = safeClosest(control, selector);
@@ -265,8 +264,21 @@
     if (!container || !container.querySelector) {
       return "";
     }
-    const link = container.querySelector("a[href*='DetailView.do'], a[href*='detail/DetailView'], a[href*='p_mat_type']");
-    return link ? absolutizeUrl(link.getAttribute("href")) : "";
+    const link = container.querySelector("a[href*='DetailView.do'], a[href*='detail/DetailView'], a[href*='p_mat_type'], [onclick*='DetailView.do'], [onclick*='p_mat_type']");
+    if (!link) {
+      return "";
+    }
+    const href = link.getAttribute("href");
+    if (href && href !== "#") {
+      return absolutizeUrl(href);
+    }
+    const onclick = link.getAttribute("onclick") || "";
+    const direct = onclick.match(/https?:\/\/[^'")\s]*(?:DetailView\.do|p_mat_type)[^'")\s]*/i);
+    if (direct) {
+      return direct[0];
+    }
+    const quoted = onclick.match(/['"]([^'"]*(?:DetailView\.do|p_mat_type)[^'"]*)['"]/i);
+    return quoted ? absolutizeUrl(quoted[1]) : "";
   }
 
   function enrichRissContextFromDetail(context, container) {

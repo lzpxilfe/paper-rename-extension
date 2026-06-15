@@ -690,6 +690,27 @@
     if (parts.length) {
       out.authors = splitAuthors(parts[0]);
     }
+    if (source === SOURCES.RISS && (!out.authors.length || !out.year || !out.publisher)) {
+      const titleIndex = title ? lines.indexOf(title) : -1;
+      const metadataLine = lines
+        .slice(titleIndex >= 0 ? titleIndex + 1 : 0)
+        .find((line) => parseYear(line) && /[\uac00-\ud7a3]/.test(line)) || "";
+      const year = parseYear(metadataLine);
+      const beforeYear = year ? metadataLine.split(year)[0] : metadataLine;
+      const tokens = beforeYear.split(/\s+/).map(cleanValue).filter((token) => token && token !== "|");
+      const institutionIndex = tokens.findIndex((token) => /(?:\ub300\ud559\uad50|\ub300\ud559\uc6d0|\ud559\ud68c|\uc5f0\uad6c\uc18c|\ubc15\ubb3c\uad00)/.test(token));
+      const suspiciousAuthors = out.authors.join(" ");
+      const shouldReplaceAuthors = !out.authors.length || /(?:RISS|\uac80\uc0c9|\ud559\uc704\ub17c\ubb38|\uad6d\ub0b4\ud559\uc220\ub17c\ubb38)/i.test(suspiciousAuthors);
+      if (shouldReplaceAuthors && institutionIndex > 0) {
+        out.authors = splitAuthors(tokens.slice(0, institutionIndex).join(";"));
+      }
+      if (!out.publisher && institutionIndex >= 0) {
+        out.publisher = tokens.slice(institutionIndex).join(" ").replace(/\s*\|\s*$/g, "");
+      }
+      if (!out.year && year) {
+        out.year = year;
+      }
+    }
     const yearPart = parts.find((part) => parseYear(part));
     if (yearPart) {
       out.year = parseYear(yearPart);
