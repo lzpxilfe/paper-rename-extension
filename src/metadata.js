@@ -241,10 +241,12 @@
   function applyFactsToMetadata(meta, facts) {
     const next = Object.assign({}, meta || {});
     const authors = valueByLabels(facts, ["저자", "Authors", "Author"]);
-    const journal = valueByLabels(facts, ["학술지명", "학술지", "간행물명", "논문집", "Journal"]);
-    const publisher = valueByLabels(facts, ["발행기관", "출판사", "발행처", "Publisher", "소속기관"]);
-    const year = valueByLabels(facts, ["발행연도", "발행년도", "연도", "Year", "발행일"]);
+    const journal = valueByLabels(facts, ["학술지명", "학술지", "간행물명", "논문집", "저널/프로시딩명", "Journal", "Journal/Proceedings"]);
+    const publisher = valueByLabels(facts, ["발행기관", "출판사", "발행처", "Publisher", "소속기관", "발행처명"]);
+    const year = valueByLabels(facts, ["발행연도", "발행년도", "발행년", "연도", "Year", "발행일", "게재년월", "발간년월", "Published"]);
     const pages = valueByLabels(facts, ["수록면", "페이지", "쪽수", "Pages", "Page"]);
+    const pageFirst = valueByLabels(facts, ["시작페이지", "시작 페이지", "Start Page", "First Page"]);
+    const pageLast = valueByLabels(facts, ["끝페이지", "끝 페이지", "End Page", "Last Page"]);
     const volumeIssue = valueByLabels(facts, ["권호사항", "권호", "Volume", "Issue"]);
     const volume = valueByLabels(facts, ["권", "Volume", "Vol"]);
     const issue = valueByLabels(facts, ["호", "Issue", "No"]);
@@ -264,6 +266,12 @@
     }
     if (pages) {
       Object.assign(next, parsePages(pages));
+    }
+    if (pageFirst && !next.pageFirst) {
+      next.pageFirst = normalizeSpaces(pageFirst).replace(/[^\d]/g, "");
+    }
+    if (pageLast && !next.pageLast) {
+      next.pageLast = normalizeSpaces(pageLast).replace(/[^\d]/g, "");
     }
     if (volumeIssue) {
       const parsed = parseVolumeIssue(volumeIssue);
@@ -313,7 +321,7 @@
     if (/riss/i.test(host) && /\/search\/detail\/DetailView\.do/i.test(parsed.pathname)) {
       return SOURCES.RISS;
     }
-    if (/kci\.go\.kr$/i.test(host) && (/ciSereArtiView/i.test(href) || /\/landing\/article\.kci/i.test(parsed.pathname))) {
+    if (/kci\.go\.kr$/i.test(host) && /\/kciportal\//i.test(parsed.pathname)) {
       return SOURCES.KCI;
     }
     if (/kiss\.kstudy\.com$/i.test(host) && /\/Detail/i.test(parsed.pathname)) {
@@ -328,6 +336,18 @@
     if (/scholar\.kyobobook\.co\.kr$/i.test(host) && /\/article\/detail\//i.test(parsed.pathname)) {
       return SOURCES.SCHOLAR;
     }
+    if (/scholar-kyobobook-co-kr-ssl\.openlib\.uos\.ac\.kr$/i.test(host)) {
+      return SOURCES.SCHOLAR;
+    }
+    if (/koreascience\.or\.kr$/i.test(host)) {
+      return SOURCES.KOREASCIENCE;
+    }
+    if (/scienceon\.kisti\.re\.kr$/i.test(host)) {
+      return SOURCES.SCIENCEON;
+    }
+    if (/(^|\.)krm\.or\.kr$/i.test(host)) {
+      return SOURCES.KRM;
+    }
     return SOURCES.UNKNOWN || "unknown";
   }
 
@@ -338,13 +358,16 @@
       KISS: [".articleTitle", ".title", "h3", "h2"],
       DBpia: [".thesis__tit", ".article-title", ".title", "h1", "h2"],
       eArticle: [".articleTitle", ".title", "h3", "h2"],
-      "교보 스콜라": [".article-title", ".title", "h3", "h2"]
+      "교보 스콜라": [".article-title", ".title", "h3", "h2"],
+      KoreaScience: [".articleTitle", ".title", ".paper-title", "h1", "h2"],
+      ScienceON: [".title", ".tit", ".paper-title", "h1", "h2"],
+      KRM: [".title", ".tit", ".subject", "h1", "h2"]
     };
     const selectors = (sourceTitleSelectors[source] || [])
       .concat(["meta[property='og:title']", "meta[name='title']", "title"]);
     const metaTitle = metaContent(doc, ["meta[property='og:title']", "meta[name='title']"]);
     const title = firstText(doc, selectors.filter((selector) => !selector.startsWith("meta"))) || metaTitle || cleanValue(doc && doc.title);
-    return splitTitle(title.replace(/\s*-\s*(RISS|KCI|KISS|DBpia|eArticle|교보문고|스콜라).*$/i, ""));
+    return splitTitle(title.replace(/\s*-\s*(RISS|KCI|KISS|DBpia|eArticle|교보문고|스콜라|KoreaScience|ScienceON|KRM).*$/i, ""));
   }
 
   function extractAuthorsBySelector(doc) {

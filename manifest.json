@@ -10,13 +10,16 @@
   ],
   "host_permissions": [
     "https://*.riss.kr/search/detail/DetailView.do*",
-    "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView*",
-    "https://www.kci.go.kr/kciportal/landing/article.kci*",
+    "https://www.kci.go.kr/kciportal/*",
     "https://*.kiss.kstudy.com/Detail*/Ar*",
     "https://*.dbpia.com/journal/articleDetail*",
     "https://*.dbpia.com/journal/detail*",
     "https://*.earticle.net/Article/*",
-    "https://*.scholar.kyobobook.co.kr/article/detail/*"
+    "https://*.scholar.kyobobook.co.kr/*",
+    "https://*.koreascience.or.kr/*",
+    "https://scienceon.kisti.re.kr/*",
+    "https://*.krm.or.kr/*",
+    "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -31,13 +34,16 @@
     {
       "matches": [
         "https://*.riss.kr/search/detail/DetailView.do*",
-        "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView*",
-        "https://www.kci.go.kr/kciportal/landing/article.kci*",
+        "https://www.kci.go.kr/kciportal/*",
         "https://*.kiss.kstudy.com/Detail*/Ar*",
         "https://*.dbpia.com/journal/articleDetail*",
         "https://*.dbpia.com/journal/detail*",
         "https://*.earticle.net/Article/*",
-        "https://*.scholar.kyobobook.co.kr/article/detail/*"
+        "https://*.scholar.kyobobook.co.kr/*",
+        "https://*.koreascience.or.kr/*",
+        "https://scienceon.kisti.re.kr/*",
+        "https://*.krm.or.kr/*",
+        "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*"
       ],
       "js": [
         "src/constants.js",

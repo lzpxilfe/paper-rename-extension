@@ -16,6 +16,9 @@
     DBPIA: "DBpia",
     EARTICLE: "eArticle",
     SCHOLAR: "교보 스콜라",
+    KOREASCIENCE: "KoreaScience",
+    SCIENCEON: "ScienceON",
+    KRM: "KRM",
     UNKNOWN: "unknown"
   };
 

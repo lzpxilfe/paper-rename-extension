@@ -10,6 +10,10 @@
 - DBpia
 - eArticle
 - 교보 스콜라
+- KoreaScience
+- ScienceON
+- KRM 기초학문자료센터
+- 교보 스콜라 기관 프록시(`scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr`)
 
 ## 사용 방법
 

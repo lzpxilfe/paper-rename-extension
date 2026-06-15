@@ -165,7 +165,11 @@ const fixtureCases = [
   ["kiss.html", "https://kiss.kstudy.com/Detail/Ar?key=1", "KISS", "일제강점기 잡지 번역의 양상", "현대문학사", "2023"],
   ["dbpia.html", "https://www.dbpia.com/journal/articleDetail?nodeId=1", "DBpia", "문학장과 출판 네트워크", "인문학연구", "2022"],
   ["earticle.html", "https://www.earticle.net/Article/A1", "eArticle", "근대 독서 문화의 형성", "독서문화연구", "2021"],
-  ["scholar.html", "https://scholar.kyobobook.co.kr/article/detail/1", "교보 스콜라", "서사 구조와 기억의 정치", "문화와 서사", "2020"]
+  ["scholar.html", "https://scholar.kyobobook.co.kr/article/detail/1", "교보 스콜라", "서사 구조와 기억의 정치", "문화와 서사", "2020"],
+  ["scholar.html", "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/article/detail/1", "교보 스콜라", "서사 구조와 기억의 정치", "문화와 서사", "2020"],
+  ["koreascience.html", "https://www.koreascience.or.kr/article/JAKO202400000000001.page", "KoreaScience", "과학기술 지식정보 활용 연구", "정보관리학회지", "2024"],
+  ["scienceon.html", "https://scienceon.kisti.re.kr/srch/selectPORSrchArticle.do?cn=ART002255251", "ScienceON", "데이터 기반 연구성과 분석", "한국데이터정보과학회지", "2023"],
+  ["krm.html", "https://www.krm.or.kr/krmts/search/detailView.html?category=ResearchPaper&dbGubun=SD&local_id=10061537", "KRM", "지역 문화 연구의 자료화 방안", "인문사회연구", "2022"]
 ];
 
 fixtureCases.forEach(([file, url, source, title, journal, year]) => {
