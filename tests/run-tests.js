@@ -170,11 +170,6 @@ test("thesisDeptMode changes thesis publisher formatting", () => {
     originalFilename: "article.pdf"
   };
 
-  const actualParen = filename.renderFilename(
-    meta,
-    Object.assign({}, filename.safeSettings(), { thesisDeptMode: "paren" })
-  );
-  assert.equal(actualParen, "백혜림, 2025, 『禮山 伽倻寺址 伽藍 變遷 硏究』, 서울시립대학교 (국사학과) 석사학위논문.pdf");
 
   const actualPlain = filename.renderFilename(
     meta,

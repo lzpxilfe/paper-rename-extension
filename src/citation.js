@@ -97,15 +97,11 @@
           const inst = source.thesisInstitution;
           const dept = source.thesisDept;
           const deg = source.thesisDegree;
-          const mode = (settings && settings.thesisDeptMode) || "paren";
+          const mode = (settings && settings.thesisDeptMode) || "none";
           
           let formatted = inst;
-          if (dept) {
-            if (mode === "paren") {
-              formatted += ` (${dept})`;
-            } else if (mode === "plain") {
-              formatted += ` ${dept}`;
-            }
+          if (dept && mode === "plain") {
+            formatted += ` ${dept}`;
           }
           if (deg) {
             formatted += ` ${deg}`;
