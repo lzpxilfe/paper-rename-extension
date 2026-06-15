@@ -161,6 +161,38 @@ function hostnameOf(value) {
   }
 }
 
+function downloadValues(downloadItem) {
+  return [
+    downloadItem && downloadItem.url,
+    downloadItem && downloadItem.finalUrl,
+    downloadItem && downloadItem.referrer,
+    downloadItem && downloadItem.tabUrl,
+    downloadItem && downloadItem.filename
+  ].filter(Boolean);
+}
+
+function isBlacklistedDownload(downloadItem) {
+  if (!downloadItem || !constants || typeof constants.isBlacklistedSite !== "function") {
+    return false;
+  }
+  if (downloadValues(downloadItem).some((value) => constants.isBlacklistedSite(value))) {
+    return true;
+  }
+  const extensionName = String(downloadItem.byExtensionName || "");
+  return /국가유산\s*보고서\s*파일명\s*정리|archreport/i.test(extensionName);
+}
+
+function isPotentialPaperDownload(downloadItem) {
+  if (!downloadItem || isBlacklistedDownload(downloadItem)) {
+    return false;
+  }
+  if (pendingContexts.length > 0) {
+    return true;
+  }
+  return Boolean(constants && typeof constants.isAcademicSite === "function" &&
+    downloadValues(downloadItem).some((value) => constants.isAcademicSite(value)));
+}
+
 function sameKnownPaperHost(left, right) {
   const leftHost = hostnameOf(left);
   const rightHost = hostnameOf(right);
@@ -172,13 +204,7 @@ function sameKnownPaperHost(left, right) {
 }
 
 function isLikelyViewerDownload(downloadItem) {
-  const text = normalizeUrl([
-    downloadItem && downloadItem.url,
-    downloadItem && downloadItem.finalUrl,
-    downloadItem && downloadItem.referrer,
-    downloadItem && downloadItem.tabUrl,
-    downloadItem && downloadItem.filename
-  ].filter(Boolean).join(" "));
+  const text = normalizeUrl(downloadValues(downloadItem).join(" "));
   return /(?:viewer|view|download|down|file|pdf|riss|kci|원문|다운로드)/i.test(text);
 }
 
@@ -362,14 +388,9 @@ function rememberContext(context, sender) {
 }
 
 function findContextEntry(downloadItem, callback) {
-  if (downloadItem) {
-    const itemUrl = downloadItem.finalUrl || downloadItem.url || "";
-    const itemReferrer = downloadItem.referrer || downloadItem.tabUrl || "";
-    if (constants && typeof constants.isBlacklistedSite === "function" &&
-        (constants.isBlacklistedSite(itemUrl) || constants.isBlacklistedSite(itemReferrer))) {
-      callback(null);
-      return;
-    }
+  if (isBlacklistedDownload(downloadItem)) {
+    callback(null);
+    return;
   }
   const now = Date.now();
   const first = selectContextEntry(downloadItem, now);
@@ -460,9 +481,8 @@ function registerChromeListeners() {
 
   if (hasChromeApi(["downloads", "onDeterminingFilename"])) {
     chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-      if (settingsCache.enabled === false) {
-        suggest();
-        return;
+      if (settingsCache.enabled === false || !isPotentialPaperDownload(downloadItem)) {
+        return false;
       }
       findContextEntry(downloadItem, (entry) => {
         if (!entry || !entry.context || !entry.context.metadata) {
@@ -478,6 +498,7 @@ function registerChromeListeners() {
           conflictAction: "uniquify"
         });
       });
+      return true;
     });
   }
 }
@@ -504,6 +525,8 @@ if (typeof module !== "undefined" && module.exports) {
     findContextEntry,
     handleTabRelation,
     hasContextMetadata,
+    isBlacklistedDownload,
+    isPotentialPaperDownload,
     loadSettings,
     rememberContext,
     restoreContexts,

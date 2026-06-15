@@ -964,7 +964,37 @@ test("dCollection viewer background match links details using streamdocsId", () 
 test("constants.isBlacklistedSite returns true for blacklisted domains", () => {
   assert.ok(constants.isBlacklistedSite("https://portal.nrich.go.kr/page"));
   assert.ok(constants.isBlacklistedSite("https://www.heritage.go.kr/download/file"));
+  assert.ok(constants.isBlacklistedSite("https://www.e-minwon.go.kr/download/file"));
+  assert.ok(constants.isBlacklistedSite("http://116.67.83.213/report/file.pdf"));
   assert.ok(!constants.isBlacklistedSite("https://www.riss.kr/search/detail/DetailView.do"));
+});
+
+test("background passes through archreport downloads", () => {
+  background._state.reset();
+  assert.ok(background.isBlacklistedDownload({
+    url: "https://www.e-minwon.go.kr/download/file",
+    filename: "report.pdf"
+  }));
+  assert.ok(!background.isPotentialPaperDownload({
+    url: "https://www.e-minwon.go.kr/download/file",
+    filename: "report.pdf"
+  }));
+  assert.ok(background.isBlacklistedDownload({
+    url: "https://example.test/report.pdf",
+    byExtensionName: "국가유산 보고서 파일명 정리"
+  }));
+  assert.ok(!background.isPotentialPaperDownload({
+    url: "https://example.test/report.pdf",
+    byExtensionName: "국가유산 보고서 파일명 정리"
+  }));
+  assert.ok(!background.isBlacklistedDownload({
+    url: "https://www.riss.kr/search/detail/DetailView.do",
+    filename: "paper.pdf"
+  }));
+  assert.ok(background.isPotentialPaperDownload({
+    url: "https://www.riss.kr/search/detail/DetailView.do",
+    filename: "paper.pdf"
+  }));
 });
 
 test("background ignores blacklisted site downloads", () => {

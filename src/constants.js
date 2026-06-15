@@ -80,7 +80,7 @@
     }
   }
 
-  const BLACKLIST_DOMAINS_PATTERN = /heritage\.go\.kr|nrich\.go\.kr|nihc\.go\.kr|gogung\.go\.kr|khs\.go\.kr|cha\.go\.kr|nch\.go\.kr/i;
+  const BLACKLIST_DOMAINS_PATTERN = /heritage\.go\.kr|nrich\.go\.kr|nihc\.go\.kr|gogung\.go\.kr|khs\.go\.kr|cha\.go\.kr|nch\.go\.kr|e-minwon\.go\.kr|116\.67\.83\.213/i;
 
   function isBlacklistedSite(url) {
     if (!url) return false;
