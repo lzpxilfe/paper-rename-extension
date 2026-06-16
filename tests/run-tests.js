@@ -926,6 +926,59 @@ test("dCollection service title is not accepted as paper metadata", () => {
   assert.deepEqual(actual.authors, []);
 });
 
+const dcollectionDetailHtml = `
+  <!doctype html>
+  <html lang="ko">
+  <head><title>dCollection 디지털 학술정보 유통시스템</title></head>
+  <body>
+    <div class="bookBriefInfo">
+      <div class="titArea">
+        <h3 class="bookTit">경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징</h3>
+      </div>
+      <ul class="related">
+        <li class="writer">
+          <a href="/srch/srchResultListByLink?keyword=임초롱&field=creator_all">임초롱</a>,
+          <a href="/srch/srchResultListByLink?keyword=주상훈&field=creator_all">주상훈</a>
+        </li>
+        <li class="volume">
+          <a href="/srch/srchDetail/S00000028902">문화재</a>, 2022, Vol.55 No.1, 281-304
+        </li>
+      </ul>
+      <a class="bookBtn" href="javascript:orgView('200000611177');">원문보기</a>
+    </div>
+    <div class="bookDetailInfo">
+      <ul class="detailArea">
+        <li><span class="eleName">주제(KDC)</span><span class="eleMeta">900</span></li>
+        <li><span class="eleName">발행기관</span><span class="eleMeta"><a href="#">국립문화재연구소</a></span></li>
+        <li><span class="eleName">발행년도</span><span class="eleMeta">2022</span></li>
+      </ul>
+    </div>
+  </body>
+  </html>
+`;
+
+test("dCollection detail page parses book metadata instead of KDC noise", () => {
+  const actual = metadata.parseFixtureHtml(
+    dcollectionDetailHtml,
+    "https://scholar.dcollection.net/srch/srchDetail/200000611177"
+  );
+
+  assert.equal(actual.source, "dCollection");
+  assert.deepEqual(actual.authors, ["임초롱", "주상훈"]);
+  assert.equal(actual.titleMain, "경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징");
+  assert.equal(actual.journalName, "문화재");
+  assert.equal(actual.volume, "55");
+  assert.equal(actual.issue, "1");
+  assert.equal(actual.publisher, "국립문화재연구소");
+  assert.equal(actual.year, "2022");
+  assert.equal(actual.pageFirst, "281");
+  assert.equal(actual.pageLast, "304");
+  assert.equal(
+    filename.renderFilename(actual, filename.safeSettings()),
+    "임초롱·주상훈, 2022, 「경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징」, 『문화재』 55(1), 국립문화재연구소.pdf"
+  );
+});
+
 test("dCollection search result row text yields the clicked paper metadata", () => {
   const actual = metadata.parseResultText(`
     107  분산점칼만필터를 이용한 휴머노이드 로봇 SLAM 아키텍쳐
@@ -941,6 +994,71 @@ test("dCollection search result row text yields the clicked paper metadata", () 
   assert.equal(actual.issue, "2");
   assert.equal(actual.year, "2015");
 });
+
+test("dCollection public resource PDF url shares id with detail context", () => {
+  background._state.reset();
+  const now = Date.now();
+  const dcolMeta = {
+    authors: ["임초롱", "주상훈"],
+    titleMain: "경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징",
+    journalName: "문화재",
+    volume: "55",
+    issue: "1",
+    publisher: "국립문화재연구소",
+    year: "2022",
+    source: "dCollection",
+    pageUrl: "https://scholar.dcollection.net/srch/srchDetail/200000611177"
+  };
+
+  background.rememberContext({
+    metadata: dcolMeta,
+    pageUrl: "https://scholar.dcollection.net/srch/srchDetail/200000611177",
+    downloadUrl: "javascript:orgView('200000611177');",
+    capturedAt: now
+  }, { tab: { id: 61 }, frameId: 0 });
+
+  const entry = background.chooseContextEntry({
+    tabId: 62,
+    url: "https://scholar.dcollection.net/public_resource/pdf/200000611177_20260616105509.pdf",
+    filename: "200000611177_20260616105509.pdf"
+  }, now + 500);
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, dcolMeta.titleMain);
+});
+
+test("background fetches dCollection detail metadata for direct public resource PDF", () => new Promise((resolve, reject) => {
+  background._state.reset();
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    try {
+      assert.equal(url, "https://scholar.dcollection.net/srch/srchDetail/200000611177");
+      return {
+        ok: true,
+        text: async () => dcollectionDetailHtml
+      };
+    } catch (error) {
+      reject(error);
+      return { ok: false, text: async () => "" };
+    }
+  };
+
+  background.findContextEntry({
+    tabId: -1,
+    url: "https://scholar.dcollection.net/public_resource/pdf/200000611177_20260616105509.pdf",
+    filename: "200000611177_20260616105509.pdf"
+  }, (entry) => {
+    global.fetch = originalFetch;
+    try {
+      assert.ok(entry);
+      assert.equal(entry.context.metadata.titleMain, "경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징");
+      assert.equal(entry.context.metadata.journalName, "문화재");
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}));
 
 test("background ignores dCollection viewer service metadata", () => {
   background._state.reset();

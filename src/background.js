@@ -1,13 +1,15 @@
 if (typeof importScripts === "function") {
-  importScripts("constants.js", "citation.js", "filename.js");
+  importScripts("constants.js", "citation.js", "filename.js", "metadata.js");
 } else if (typeof require === "function") {
   globalThis.PaperRenameConstants = globalThis.PaperRenameConstants || require("./constants.js");
   globalThis.PaperRenameCitation = globalThis.PaperRenameCitation || require("./citation.js");
   globalThis.PaperRenameFilename = globalThis.PaperRenameFilename || require("./filename.js");
+  globalThis.PaperRenameMetadata = globalThis.PaperRenameMetadata || require("./metadata.js");
 }
 
 const constants = globalThis.PaperRenameConstants;
 const filenameModule = globalThis.PaperRenameFilename;
+const metadataModule = globalThis.PaperRenameMetadata;
 
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
@@ -208,16 +210,31 @@ function isLikelyViewerDownload(downloadItem) {
   return /(?:viewer|view|download|down|file|pdf|riss|kci|원문|다운로드)/i.test(text);
 }
 
+function extractDcollectionId(urlText) {
+  if (!urlText) {
+    return "";
+  }
+  const raw = String(urlText);
+  const inlineMatch = raw.match(/(?:streamdocsId|sItemId)[=;:'"]+([A-Za-z0-9_-]+)/i) ||
+    raw.match(/orgView\(\s*['"]?([A-Za-z0-9_-]+)/i) ||
+    raw.match(/\/public_resource\/pdf\/([A-Za-z0-9_-]+?)(?:[_\.]|$)/i) ||
+    raw.match(/\/(?:srch\/srchDetail|common\/orgView|search\/detail|public_resource\/detail)\/([A-Za-z0-9_-]+)/i) ||
+    raw.match(/\/handler\/[^/]+\/([A-Za-z0-9_-]+)/i);
+  if (inlineMatch) {
+    return inlineMatch[1];
+  }
+  return "";
+}
+
 function extractPaperId(urlText) {
   if (!urlText) {
     return "";
   }
+  const dcollectionId = extractDcollectionId(urlText);
+  if (dcollectionId) {
+    return `dcollection:${dcollectionId}`;
+  }
   try {
-    const sdMatch = urlText.match(/(?:streamdocsId|sItemId)[=;:'"]+([A-Za-z0-9_-]+)/i);
-    if (sdMatch) {
-      return `dcollection:${sdMatch[1]}`;
-    }
-
     const parsed = new URL(urlText);
     const keys = ["cn", "artiId", "key", "nodeId", "p_mat_type", "artId", "articleId", "sItemId", "streamdocsId"];
     for (const key of keys) {
@@ -241,6 +258,54 @@ function extractPaperId(urlText) {
     }
   }
   return "";
+}
+
+function dcollectionDetailInfo(downloadItem) {
+  for (const value of downloadValues(downloadItem)) {
+    const itemId = extractDcollectionId(value);
+    if (!itemId) {
+      continue;
+    }
+    try {
+      const parsed = new URL(String(value));
+      if (/dcollection/i.test(parsed.hostname) && !/^viewer\.dcollection\.net$/i.test(parsed.hostname)) {
+        return {
+          itemId,
+          url: `${parsed.origin}/srch/srchDetail/${itemId}`
+        };
+      }
+    } catch (_error) {}
+  }
+  return null;
+}
+
+function fetchDcollectionContext(downloadItem, callback) {
+  const detail = dcollectionDetailInfo(downloadItem);
+  if (!detail || !metadataModule || typeof metadataModule.parseFixtureHtml !== "function" || typeof fetch !== "function") {
+    callback(null);
+    return;
+  }
+  fetch(detail.url, { credentials: "include" })
+    .then((response) => response && response.ok ? response.text() : "")
+    .then((html) => {
+      if (!html) {
+        callback(null);
+        return;
+      }
+      const metadata = metadataModule.parseFixtureHtml(html, detail.url);
+      const context = {
+        metadata: Object.assign({}, metadata, {
+          originalFilename: metadata.originalFilename || filenameModule.filenameFromUrl(downloadItem && downloadItem.filename)
+        }),
+        pageUrl: detail.url,
+        downloadUrl: downloadItem && (downloadItem.finalUrl || downloadItem.url) || "",
+        originalFilename: filenameModule.filenameFromUrl(downloadItem && downloadItem.filename),
+        source: constants.SOURCES.DCOLLECTION,
+        capturedAt: Date.now()
+      };
+      callback(hasContextMetadata(context) ? { context, tabId: downloadItem && downloadItem.tabId, frameId: 0 } : null);
+    })
+    .catch(() => callback(null));
 }
 
 function contextScore(entry, downloadItem, now) {
@@ -392,13 +457,20 @@ function findContextEntry(downloadItem, callback) {
     callback(null);
     return;
   }
+  const finish = (entry) => {
+    if (entry) {
+      callback(entry);
+      return;
+    }
+    fetchDcollectionContext(downloadItem, callback);
+  };
   const now = Date.now();
   const first = selectContextEntry(downloadItem, now);
   if (shouldWaitForRissEnrichment(first, downloadItem, now)) {
-    setTimeout(() => chooseAfterRestore(downloadItem, callback), constants.CONTEXT_SETTLE_DELAY_MS);
+    setTimeout(() => chooseAfterRestore(downloadItem, finish), constants.CONTEXT_SETTLE_DELAY_MS);
     return;
   }
-  chooseAfterRestore(downloadItem, callback);
+  chooseAfterRestore(downloadItem, finish);
 }
 
 function handleTabRelation(tab) {
@@ -522,6 +594,10 @@ if (typeof module !== "undefined" && module.exports) {
     chooseContextEntry,
     cleanupContexts,
     contextScore,
+    dcollectionDetailInfo,
+    extractDcollectionId,
+    extractPaperId,
+    fetchDcollectionContext,
     findContextEntry,
     handleTabRelation,
     hasContextMetadata,

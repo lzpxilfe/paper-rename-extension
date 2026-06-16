@@ -129,6 +129,30 @@
     return { volume, issue };
   }
 
+  function parseDcollectionVolumeLine(value) {
+    const text = cleanValue(value);
+    if (!text) {
+      return {};
+    }
+    const out = {};
+    const parts = text.split(/\s*,\s*/).map(cleanValue).filter(Boolean);
+    const journal = parts.find((part) =>
+      part &&
+      !parseYear(part) &&
+      !/(?:Vol\.|No\.|[0-9]+\s*[-~]\s*[0-9]+)/i.test(part)
+    );
+    if (journal) {
+      out.journalName = removeNonKoreanParen(journal);
+    }
+    const year = parseYear(text);
+    if (year) {
+      out.year = year;
+    }
+    Object.assign(out, parseVolumeIssue(text));
+    Object.assign(out, parsePages(text));
+    return out;
+  }
+
   function splitJournalAndTrailingVolume(value) {
     const text = cleanValue(value);
     const match = text.match(/^(.+?)\s+(\d{1,4})(?:\s*\((\d{1,4})\))?$/);
@@ -455,6 +479,41 @@
     }
 
     return out;
+  }
+
+  function parseDcollectionDom(doc) {
+    const out = { source: SOURCES.DCOLLECTION };
+    const title = firstText(doc, [
+      ".bookBriefInfo .bookTit",
+      ".bookTit"
+    ]);
+    if (isUsableTitle(title)) {
+      Object.assign(out, splitTitle(title));
+    }
+
+    const authorText = qAll(doc, ".bookBriefInfo .writer a, .related .writer a")
+      .map(textOf)
+      .filter(Boolean)
+      .join(";");
+    const authors = splitAuthors(authorText || firstText(doc, [".bookBriefInfo .writer", ".related .writer"]));
+    if (authors.length) {
+      out.authors = authors;
+    }
+
+    Object.assign(out, parseDcollectionVolumeLine(firstText(doc, [
+      ".bookBriefInfo .volume",
+      ".related .volume"
+    ])));
+
+    const facts = {};
+    qAll(doc, ".bookDetailInfo li, .detailArea li").forEach((item) => {
+      const label = cleanLabel(textOf(q(item, ".eleName")));
+      const value = textOf(q(item, ".eleMeta"));
+      if (label && value && value.length <= FACTS_MAX_VALUE_LENGTH && !facts[label]) {
+        facts[label] = value;
+      }
+    });
+    return applyFactsToMetadata(out, facts);
   }
 
   function parseGoogleScholarMetaTags(doc) {
@@ -911,7 +970,7 @@
     // \ud559\uc704\ub17c\ubb38\uc0ac\ud56d\uc740 \ubc1c\ud589\uae30\uad00\u00b7\uc5f0\ub3c4\ub97c \ubcf5\ud569\uc73c\ub85c \ub2f4\uc73c\ubbc0\ub85c \ub2e4\ub978 \ud544\ub4dc\uc640 \ubd84\ub9ac \ud30c\uc2f1
     const thesisInfo  = valueByLabels(facts, ["\ud559\uc704\ub17c\ubb38\uc0ac\ud56d", "\ud559\uc704\ub17c\ubb38 \uc0ac\ud56d"]);
 
-    if (!next.authors.length && authors) {
+    if ((!Array.isArray(next.authors) || !next.authors.length) && authors) {
       next.authors = splitAuthors(authors);
     }
     if (!next.journalName && journal) {
@@ -1358,6 +1417,9 @@
       meta = mergePreferExtra(meta, parseKciDom(doc));
       meta = mergePreferExtra(meta, parseKciCitationText(textOf(doc.body || doc.documentElement || doc)));
     }
+    if (source === SOURCES.DCOLLECTION) {
+      meta = mergePreferExtra(meta, parseDcollectionDom(doc));
+    }
     if (!meta.titleMain) {
       Object.assign(meta, extractTitle(doc, source));
     }
@@ -1523,6 +1585,40 @@
     return out;
   }
 
+  function parseDcollectionHtml(html) {
+    const out = { source: SOURCES.DCOLLECTION };
+    const title = firstHtmlText(html, [
+      /<[^>]+class=["'][^"']*bookTit[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
+    ]);
+    if (isUsableTitle(title)) {
+      Object.assign(out, splitTitle(title));
+    }
+
+    const authorText = firstHtmlText(html, [
+      /<li[^>]+class=["'][^"']*writer[^"']*["'][^>]*>([\s\S]*?)<\/li>/i
+    ]);
+    const authors = splitAuthors(authorText);
+    if (authors.length) {
+      out.authors = authors;
+    }
+
+    Object.assign(out, parseDcollectionVolumeLine(firstHtmlText(html, [
+      /<li[^>]+class=["'][^"']*volume[^"']*["'][^>]*>([\s\S]*?)<\/li>/i
+    ])));
+
+    const facts = {};
+    const factPattern = /<span[^>]+class=["'][^"']*eleName[^"']*["'][^>]*>([\s\S]*?)<\/span>[\s\S]*?<span[^>]+class=["'][^"']*eleMeta[^"']*["'][^>]*>([\s\S]*?)<\/span>/gi;
+    let match;
+    while ((match = factPattern.exec(String(html || "")))) {
+      const label = cleanLabel(stripTags(decodeHtml(match[1])));
+      const value = cleanValue(stripTags(decodeHtml(match[2])));
+      if (label && value && value.length <= FACTS_MAX_VALUE_LENGTH && !facts[label]) {
+        facts[label] = value;
+      }
+    }
+    return applyFactsToMetadata(out, facts);
+  }
+
   function parseFixtureHtml(html, url) {
     const source = detectSource(url);
     let meta = blankMetadata(source, url);
@@ -1539,6 +1635,9 @@
     if (source === SOURCES.KCI) {
       meta = mergePreferExtra(meta, parseKciHtml(html));
       meta = mergePreferExtra(meta, parseKciCitationText(stripTags(html)));
+    }
+    if (source === SOURCES.DCOLLECTION) {
+      meta = mergePreferExtra(meta, parseDcollectionHtml(html));
     }
     if (!meta.titleMain) {
       const htmlTitle = titleFromHtml(html);
@@ -1569,6 +1668,8 @@
     parseJsonLd,
     parseJsonLdFromHtml,
     parseKciCitationText,
+    parseDcollectionHtml,
+    parseDcollectionVolumeLine,
     parsePages,
     parseResultText,
     parseVolumeIssue,
