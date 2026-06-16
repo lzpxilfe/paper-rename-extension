@@ -81,8 +81,17 @@
     try {
       const parsed = new URL(url);
       const host = parsed.hostname;
-      const path = parsed.pathname;
-      return ACADEMIC_DOMAINS_PATTERN.test(host) || ACADEMIC_DOMAINS_PATTERN.test(path);
+      if (ACADEMIC_DOMAINS_PATTERN.test(host)) {
+        return true;
+      }
+      if (parsed.protocol === "blob:" && parsed.pathname) {
+        try {
+          return ACADEMIC_DOMAINS_PATTERN.test(new URL(parsed.pathname).hostname);
+        } catch (_innerError) {
+          return false;
+        }
+      }
+      return false;
     } catch (_e) {
       return false;
     }

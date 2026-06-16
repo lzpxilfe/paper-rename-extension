@@ -354,9 +354,6 @@ function isPotentialPaperDownload(downloadItem) {
   if (!downloadItem || isBlacklistedDownload(downloadItem)) {
     return false;
   }
-  if (pendingContexts.length > 0) {
-    return true;
-  }
   return Boolean(constants && typeof constants.isAcademicSite === "function" &&
     downloadValues(downloadItem).some((value) => constants.isAcademicSite(value)));
 }

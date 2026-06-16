@@ -262,6 +262,9 @@
       if (/^[\uac00-\ud7a3]$/.test(target)) {
         return false;
       }
+      if (/^[A-Za-z]{1,3}$/.test(target)) {
+        return normalized.toLowerCase() === target.toLowerCase();
+      }
       return normalized.includes(target);
     });
   }

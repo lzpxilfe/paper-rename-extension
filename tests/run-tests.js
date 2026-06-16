@@ -644,6 +644,47 @@ test("eArticle metadata removes trailing navigation link labels", () => {
   assert.ok(!rendered.includes("바로가기"));
 });
 
+test("ScienceON ignores AI helper open-source modal labels as issue metadata", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head>
+      <meta name="citation_title" content="[\ub17c\ubb38]\uc2dc\uac01\uc608\uc220 \uc791\uac00 \uae30\ub85d\ubb3c \uc218\uc9d1\uc804\ub7b5 \ubc0f \uae30\ub85d\uc815\ubcf4 \uad00\ub9ac \uc5f0\uad6c" />
+      <meta name="citation_author" content="\uc815\uacf5\uc8fc" />
+      <meta name="citation_author" content="\ubc15\uc8fc\uc11d" />
+      <meta name="citation_journal_title" content="\uae30\ub85d\ud559\uc5f0\uad6c = The Korean Journal of Archival Studies" />
+      <meta name="citation_volume" content="40" />
+      <meta name="citation_publication_date" content="2014" />
+      <meta name="citation_publisher" content="\ud55c\uad6d\uae30\ub85d\ud559\ud68c" />
+    </head>
+    <body>
+      <h1>[\ub17c\ubb38]\uc2dc\uac01\uc608\uc220 \uc791\uac00 \uae30\ub85d\ubb3c \uc218\uc9d1\uc804\ub7b5 \ubc0f \uae30\ub85d\uc815\ubcf4 \uad00\ub9ac \uc5f0\uad6c</h1>
+      <aside id="openSourceNotice">
+        <dl>
+          <dt>NLLB(No Language Left Behind) 200</dt>
+          <dd>
+            <a href="https://huggingface.co/facebook/nllb-200-3.3B">https://huggingface.co/facebook/nllb-200-3.3B</a>
+            License : cc-by-nc-4.0
+          </dd>
+        </dl>
+      </aside>
+    </body>
+    </html>
+  `, "https://scienceon.kisti.re.kr/srch/selectPORSrchArticle.do?cn=JAKO201415048149463&SITE=CLICK");
+
+  assert.deepEqual(actual.authors, ["\uc815\uacf5\uc8fc", "\ubc15\uc8fc\uc11d"]);
+  assert.equal(actual.titleMain, "\uc2dc\uac01\uc608\uc220 \uc791\uac00 \uae30\ub85d\ubb3c \uc218\uc9d1\uc804\ub7b5 \ubc0f \uae30\ub85d\uc815\ubcf4 \uad00\ub9ac \uc5f0\uad6c");
+  assert.equal(actual.journalName, "\uae30\ub85d\ud559\uc5f0\uad6c");
+  assert.equal(actual.volume, "40");
+  assert.equal(actual.issue, "");
+
+  const rendered = filename.renderFilename(actual, filename.safeSettings());
+  assert.equal(
+    rendered,
+    "\uc815\uacf5\uc8fc\u00b7\ubc15\uc8fc\uc11d, 2014, \u300c\uc2dc\uac01\uc608\uc220 \uc791\uac00 \uae30\ub85d\ubb3c \uc218\uc9d1\uc804\ub7b5 \ubc0f \uae30\ub85d\uc815\ubcf4 \uad00\ub9ac \uc5f0\uad6c\u300d, \u300e\uae30\ub85d\ud559\uc5f0\uad6c\u300f 40, \ud55c\uad6d\uae30\ub85d\ud559\ud68c.pdf"
+  );
+});
+
 test("Seoul History archive research article metadata is parsed", () => {
   const actual = metadata.parseFixtureHtml(`
     <!doctype html>
@@ -837,11 +878,13 @@ test("isAcademicSite accurately filters domestic academic URLs", () => {
   assert.ok(constants.isAcademicSite("https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1"));
   assert.ok(constants.isAcademicSite("https://scholar.google.co.kr/scholar?hl=ko&q=test"));
   assert.ok(constants.isAcademicSite("https://dcollection.uos.ac.kr/jsp/common/DcResultDownload.jsp?id=123"));
+  assert.ok(constants.isAcademicSite("blob:https://scienceon.kisti.re.kr/64f0d0aa-8b57-4d5f-a1d6-a5da2a0e2c0a"));
   
   // Non-academic sites should return false
   assert.ok(!constants.isAcademicSite("https://www.naver.com/"));
   assert.ok(!constants.isAcademicSite("https://news.naver.com/main/read.nhn?mode=LSD&mid=shm&sid1=105&oid=001&aid=00000001"));
   assert.ok(!constants.isAcademicSite("https://www.google.com/search?q=test"));
+  assert.ok(!constants.isAcademicSite("https://example.com/downloads/scienceon-report.pdf"));
 });
 
 test("default settings has includePages as false", () => {
@@ -1200,6 +1243,32 @@ test("background passes through archreport downloads", () => {
   assert.ok(background.isPotentialPaperDownload({
     url: "https://www.riss.kr/search/detail/DetailView.do",
     filename: "paper.pdf"
+  }));
+});
+
+test("background does not treat ordinary downloads as paper downloads with pending context", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1",
+    downloadUrl: "https://www.riss.kr/link?id=T123",
+    capturedAt: now
+  }, { tab: { id: 9 }, frameId: 0 });
+
+  assert.ok(!background.isPotentialPaperDownload({
+    tabId: 9,
+    url: "https://example.com/downloads/scienceon-report.pdf",
+    referrer: "https://example.com/",
+    filename: "scienceon-report.pdf"
+  }));
+
+  assert.ok(!background.isPotentialPaperDownload({
+    tabId: 9,
+    url: "https://www.naver.com/files/manual.pdf",
+    referrer: "https://www.naver.com/",
+    filename: "manual.pdf"
   }));
 });
 
