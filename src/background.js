@@ -13,6 +13,8 @@ const metadataModule = globalThis.PaperRenameMetadata;
 
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
+let recentDiagnostics = [];
+let diagnosticsEnabled = false;
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
 const OPENER_CONTEXT_COPY_WINDOW_MS = 5000;
 
@@ -125,6 +127,47 @@ function persistContexts() {
   });
 }
 
+function persistDiagnostics() {
+  if (!hasChromeApi(["storage", "local", "set"])) {
+    return;
+  }
+  chrome.storage.local.set({
+    [constants.DOWNLOAD_DIAGNOSTICS_STORAGE_KEY]: recentDiagnostics
+  }, () => {
+    consumeLastError();
+  });
+}
+
+function loadDiagnosticsEnabled(callback) {
+  const done = typeof callback === "function" ? callback : () => {};
+  if (!hasChromeApi(["storage", "local", "get"])) {
+    done(diagnosticsEnabled);
+    return;
+  }
+  chrome.storage.local.get(constants.DIAGNOSTICS_ENABLED_STORAGE_KEY, (result) => {
+    diagnosticsEnabled = Boolean(result && result[constants.DIAGNOSTICS_ENABLED_STORAGE_KEY]);
+    done(diagnosticsEnabled);
+  });
+}
+
+function setDiagnosticsEnabled(enabled, callback) {
+  diagnosticsEnabled = Boolean(enabled);
+  if (!diagnosticsEnabled) {
+    recentDiagnostics = [];
+  }
+  if (!hasChromeApi(["storage", "local", "set"])) {
+    if (typeof callback === "function") callback(diagnosticsEnabled);
+    return;
+  }
+  chrome.storage.local.set({
+    [constants.DIAGNOSTICS_ENABLED_STORAGE_KEY]: diagnosticsEnabled,
+    [constants.DOWNLOAD_DIAGNOSTICS_STORAGE_KEY]: recentDiagnostics
+  }, () => {
+    consumeLastError();
+    if (typeof callback === "function") callback(diagnosticsEnabled);
+  });
+}
+
 function restoreContexts(callback) {
   const done = typeof callback === "function" ? callback : () => {};
   if (!hasChromeApi(["storage", "local", "get"])) {
@@ -140,6 +183,41 @@ function restoreContexts(callback) {
       cleanupContexts(Date.now());
     }
     done();
+  });
+}
+
+function loadDiagnostics(callback) {
+  const done = typeof callback === "function" ? callback : () => {};
+  if (!diagnosticsEnabled) {
+    done([]);
+    return;
+  }
+  if (!hasChromeApi(["storage", "local", "get"])) {
+    done(recentDiagnostics.slice());
+    return;
+  }
+  chrome.storage.local.get(constants.DOWNLOAD_DIAGNOSTICS_STORAGE_KEY, (result) => {
+    const stored = result && Array.isArray(result[constants.DOWNLOAD_DIAGNOSTICS_STORAGE_KEY])
+      ? result[constants.DOWNLOAD_DIAGNOSTICS_STORAGE_KEY]
+      : [];
+    if (stored.length) {
+      recentDiagnostics = stored.slice(0, constants.MAX_DOWNLOAD_DIAGNOSTICS || 20);
+    }
+    done(recentDiagnostics.slice());
+  });
+}
+
+function clearDownloadDiagnostics(callback) {
+  recentDiagnostics = [];
+  if (!hasChromeApi(["storage", "local", "set"])) {
+    if (typeof callback === "function") callback();
+    return;
+  }
+  chrome.storage.local.set({
+    [constants.DOWNLOAD_DIAGNOSTICS_STORAGE_KEY]: []
+  }, () => {
+    consumeLastError();
+    if (typeof callback === "function") callback();
   });
 }
 
@@ -171,6 +249,94 @@ function downloadValues(downloadItem) {
     downloadItem && downloadItem.tabUrl,
     downloadItem && downloadItem.filename
   ].filter(Boolean);
+}
+
+function truncateDiagnosticValue(value, maxLength) {
+  const text = String(value || "");
+  const max = maxLength || 240;
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+function downloadItemSummary(downloadItem) {
+  return {
+    id: downloadItem && downloadItem.id,
+    tabId: downloadItem && downloadItem.tabId,
+    url: truncateDiagnosticValue(downloadItem && downloadItem.url),
+    finalUrl: truncateDiagnosticValue(downloadItem && downloadItem.finalUrl),
+    referrer: truncateDiagnosticValue(downloadItem && downloadItem.referrer),
+    tabUrl: truncateDiagnosticValue(downloadItem && downloadItem.tabUrl),
+    filename: truncateDiagnosticValue(downloadItem && downloadItem.filename, 180),
+    byExtensionName: truncateDiagnosticValue(downloadItem && downloadItem.byExtensionName, 120)
+  };
+}
+
+function metadataSummary(metadata) {
+  return {
+    source: truncateDiagnosticValue(metadata && metadata.source, 80),
+    titleMain: truncateDiagnosticValue(metadata && metadata.titleMain, 180),
+    authors: Array.isArray(metadata && metadata.authors)
+      ? metadata.authors.slice(0, 4).map((name) => truncateDiagnosticValue(name, 60))
+      : [],
+    year: truncateDiagnosticValue(metadata && metadata.year, 20),
+    journalName: truncateDiagnosticValue(metadata && metadata.journalName, 120),
+    publisher: truncateDiagnosticValue(metadata && metadata.publisher, 120)
+  };
+}
+
+function contextDiagnosticSummary(entry, score) {
+  if (!entry || !entry.context) {
+    return null;
+  }
+  return {
+    tabId: entry.tabId,
+    frameId: entry.frameId,
+    score,
+    pageUrl: truncateDiagnosticValue(entry.context.pageUrl),
+    downloadUrl: truncateDiagnosticValue(entry.context.downloadUrl),
+    contextId: extractPaperId(entry.context.pageUrl) || extractPaperId(entry.context.downloadUrl),
+    metadata: metadataSummary(entry.context.metadata)
+  };
+}
+
+function skipReason(downloadItem) {
+  if (settingsCache.enabled === false) {
+    return "disabled";
+  }
+  if (isBlacklistedDownload(downloadItem)) {
+    return "blacklisted";
+  }
+  if (!downloadValues(downloadItem).some((value) => constants.isAcademicSite(value))) {
+    return "not-academic";
+  }
+  return "not-candidate";
+}
+
+function recordDownloadDiagnostic(detail) {
+  if (!diagnosticsEnabled) {
+    return null;
+  }
+  const downloadItem = detail && detail.downloadItem;
+  const entry = detail && detail.entry;
+  const match = detail && detail.match || entry && entry.diagnosticMatch || null;
+  const itemId = downloadItem
+    ? extractPaperId(downloadItem.finalUrl || downloadItem.url || "") ||
+      extractPaperId(downloadItem.referrer || downloadItem.tabUrl || "")
+    : "";
+  const diagnostic = {
+    capturedAt: Date.now(),
+    status: detail && detail.status || "unknown",
+    reason: detail && detail.reason || "",
+    download: downloadItemSummary(downloadItem),
+    itemId,
+    match,
+    context: contextDiagnosticSummary(entry, match && match.score),
+    suggestedFilename: truncateDiagnosticValue(detail && detail.suggestedFilename, 220),
+    contextCount: pendingContexts.length
+  };
+  recentDiagnostics.unshift(diagnostic);
+  recentDiagnostics = recentDiagnostics.slice(0, constants.MAX_DOWNLOAD_DIAGNOSTICS || 20);
+  persistDiagnostics();
+  return diagnostic;
 }
 
 function isBlacklistedDownload(downloadItem) {
@@ -303,7 +469,17 @@ function fetchDcollectionContext(downloadItem, callback) {
         source: constants.SOURCES.DCOLLECTION,
         capturedAt: Date.now()
       };
-      callback(hasContextMetadata(context) ? { context, tabId: downloadItem && downloadItem.tabId, frameId: 0 } : null);
+      callback(hasContextMetadata(context) ? {
+        context,
+        tabId: downloadItem && downloadItem.tabId,
+        frameId: 0,
+        diagnosticMatch: {
+          score: 12,
+          reason: "dcollection-detail-fetch",
+          itemId: `dcollection:${detail.itemId}`,
+          contextId: `dcollection:${detail.itemId}`
+        }
+      } : null);
     })
     .catch(() => callback(null));
 }
@@ -369,20 +545,32 @@ function isFreshContextEntry(entry, now) {
   return age >= 0 && age <= OPENER_CONTEXT_COPY_WINDOW_MS;
 }
 
-function selectContextEntry(downloadItem, nowValue) {
+function contextIdForEntry(entry) {
+  if (!entry || !entry.context) {
+    return "";
+  }
+  return extractPaperId(entry.context.pageUrl) || extractPaperId(entry.context.downloadUrl);
+}
+
+function itemIdForDownload(downloadItem) {
+  return extractPaperId(downloadItem && (downloadItem.finalUrl || downloadItem.url) || "") ||
+    extractPaperId(downloadItem && (downloadItem.referrer || downloadItem.tabUrl) || "");
+}
+
+function selectContextMatch(downloadItem, nowValue) {
   const now = Number(nowValue) || Date.now();
   cleanupContexts(now);
   let best = null;
   for (const entry of pendingContexts) {
     const score = contextScore(entry, downloadItem, now);
     if (!best || score > best.score || (score === best.score && entry.context.capturedAt > best.entry.context.capturedAt)) {
-      best = { entry, score };
+      best = { entry, score, reason: "best-score" };
     }
   }
   if ((!best || best.score < 4) && pendingContexts.length === 1) {
     const only = pendingContexts[0];
     if (isFreshContextEntry(only, now) && only.context.metadata && only.context.metadata.titleMain) {
-      best = { entry: only, score: best ? best.score : 0 };
+      best = { entry: only, score: best ? best.score : 0, reason: "single-fresh-context" };
     }
   }
   if ((!best || best.score < 3) && isLikelyViewerDownload(downloadItem)) {
@@ -392,20 +580,35 @@ function selectContextEntry(downloadItem, nowValue) {
       })
       .sort((left, right) => right.context.capturedAt - left.context.capturedAt)[0];
     if (recent) {
-      best = { entry: recent, score: 3 };
+      best = { entry: recent, score: 3, reason: "recent-viewer-context" };
     }
   }
   if (!best || best.score < 3) {
     return null;
   }
-  return best.entry;
+  return Object.assign(best, {
+    itemId: itemIdForDownload(downloadItem),
+    contextId: contextIdForEntry(best.entry)
+  });
+}
+
+function selectContextEntry(downloadItem, nowValue) {
+  const match = selectContextMatch(downloadItem, nowValue);
+  return match ? match.entry : null;
 }
 
 function chooseContextEntry(downloadItem, nowValue) {
-  const bestEntry = selectContextEntry(downloadItem, nowValue);
-  if (!bestEntry) {
+  const match = selectContextMatch(downloadItem, nowValue);
+  if (!match || !match.entry) {
     return null;
   }
+  const bestEntry = match.entry;
+  bestEntry.diagnosticMatch = {
+    score: match.score,
+    reason: match.reason,
+    itemId: match.itemId,
+    contextId: match.contextId
+  };
   pendingContexts = pendingContexts.filter((entry) => entry !== bestEntry);
   persistContexts();
   return bestEntry;
@@ -522,6 +725,7 @@ function registerChromeListeners() {
   chrome.runtime.onInstalled.addListener(() => loadSettings());
   chrome.runtime.onStartup.addListener(() => loadSettings());
   loadSettings();
+  loadDiagnosticsEnabled();
   restoreContexts();
 
   if (hasChromeApi(["tabs", "onCreated"])) {
@@ -537,6 +741,13 @@ function registerChromeListeners() {
 
   if (hasChromeApi(["storage", "onChanged"])) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === "local" && changes[constants.DIAGNOSTICS_ENABLED_STORAGE_KEY]) {
+        diagnosticsEnabled = Boolean(changes[constants.DIAGNOSTICS_ENABLED_STORAGE_KEY].newValue);
+        if (!diagnosticsEnabled) {
+          recentDiagnostics = [];
+        }
+        return;
+      }
       if (areaName !== "sync" || !changes[constants.SETTINGS_STORAGE_KEY]) {
         return;
       }
@@ -545,19 +756,49 @@ function registerChromeListeners() {
     });
   }
 
-  chrome.runtime.onMessage.addListener((message, sender) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === constants.MESSAGES.DOWNLOAD_CONTEXT) {
       rememberContext(message.context, sender);
+      return false;
     }
+    if (message && message.type === constants.MESSAGES.GET_DOWNLOAD_DIAGNOSTICS) {
+      loadDiagnostics((diagnostics) => {
+        sendResponse({ success: true, enabled: diagnosticsEnabled, diagnostics });
+      });
+      return true;
+    }
+    if (message && message.type === constants.MESSAGES.CLEAR_DOWNLOAD_DIAGNOSTICS) {
+      clearDownloadDiagnostics(() => {
+        sendResponse({ success: true, enabled: diagnosticsEnabled });
+      });
+      return true;
+    }
+    if (message && message.type === constants.MESSAGES.SET_DOWNLOAD_DIAGNOSTICS_ENABLED) {
+      setDiagnosticsEnabled(message.enabled, (enabled) => {
+        sendResponse({ success: true, enabled });
+      });
+      return true;
+    }
+    return false;
   });
 
   if (hasChromeApi(["downloads", "onDeterminingFilename"])) {
     chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       if (settingsCache.enabled === false || !isPotentialPaperDownload(downloadItem)) {
+        recordDownloadDiagnostic({
+          status: "skipped",
+          reason: skipReason(downloadItem),
+          downloadItem
+        });
         return false;
       }
       findContextEntry(downloadItem, (entry) => {
         if (!entry || !entry.context || !entry.context.metadata) {
+          recordDownloadDiagnostic({
+            status: "no-context",
+            reason: "no-matching-metadata",
+            downloadItem
+          });
           suggest();
           return;
         }
@@ -565,6 +806,13 @@ function registerChromeListeners() {
           originalFilename: entry.context.metadata.originalFilename || entry.context.originalFilename
         });
         const filename = filenameModule.renderFilename(metadata, settingsCache, downloadItem);
+        recordDownloadDiagnostic({
+          status: "renamed",
+          reason: entry.diagnosticMatch && entry.diagnosticMatch.reason || "matched-context",
+          downloadItem,
+          entry,
+          suggestedFilename: filename
+        });
         suggest({
           filename,
           conflictAction: "uniquify"
@@ -583,15 +831,24 @@ if (typeof module !== "undefined" && module.exports) {
       get pendingContexts() {
         return pendingContexts;
       },
+      get recentDiagnostics() {
+        return recentDiagnostics;
+      },
       reset() {
         pendingContexts = [];
+        recentDiagnostics = [];
+        diagnosticsEnabled = false;
         settingsCache = filenameModule.safeSettings();
+      },
+      setDiagnosticsEnabled(enabled) {
+        diagnosticsEnabled = Boolean(enabled);
       },
       setSettings(settings) {
         settingsCache = filenameModule.safeSettings(settings);
       }
     },
     chooseContextEntry,
+    clearDownloadDiagnostics,
     cleanupContexts,
     contextScore,
     dcollectionDetailInfo,
@@ -603,10 +860,13 @@ if (typeof module !== "undefined" && module.exports) {
     hasContextMetadata,
     isBlacklistedDownload,
     isPotentialPaperDownload,
+    loadDiagnostics,
     loadSettings,
     rememberContext,
+    recordDownloadDiagnostic,
     restoreContexts,
     selectContextEntry,
+    selectContextMatch,
     shouldWaitForRissEnrichment,
     updateActionState
   };

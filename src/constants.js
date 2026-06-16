@@ -3,9 +3,14 @@
 
   const APP_TITLE = "논문 PDF 인용식 파일명";
   const SETTINGS_STORAGE_KEY = "paperRenameSettings";
+  const DOWNLOAD_DIAGNOSTICS_STORAGE_KEY = "paperRenameDownloadDiagnostics";
+  const DIAGNOSTICS_ENABLED_STORAGE_KEY = "paperRenameDiagnosticsEnabled";
 
   const MESSAGES = {
     DOWNLOAD_CONTEXT: "paper-rename-download-context",
+    GET_DOWNLOAD_DIAGNOSTICS: "paper-rename-get-download-diagnostics",
+    CLEAR_DOWNLOAD_DIAGNOSTICS: "paper-rename-clear-download-diagnostics",
+    SET_DOWNLOAD_DIAGNOSTICS_ENABLED: "paper-rename-set-download-diagnostics-enabled",
     GET_PAGE_INFO: "paper-rename-get-page-info"
   };
 
@@ -48,6 +53,7 @@
   // RISS 상세 페이지 보강을 기다리는 최대 딜레이
   const CONTEXT_SETTLE_DELAY_MS = 800;
   const MAX_CONTEXTS = 30;
+  const MAX_DOWNLOAD_DIAGNOSTICS = 20;
 
   // 파일명 최대 길이 기본값 / 허용 범위
   const MAX_FILENAME_LENGTH_DEFAULT = 180;
@@ -104,15 +110,18 @@
     CONTEXT_SETTLE_DELAY_MS,
     CONTEXT_TTL_MS,
     DEFAULT_SETTINGS,
+    DIAGNOSTICS_ENABLED_STORAGE_KEY,
     isAcademicSite,
     isBlacklistedSite,
     KNOWN_HOST_PATTERNS,
     MAX_CONTEXTS,
+    MAX_DOWNLOAD_DIAGNOSTICS,
     MAX_FILENAME_LENGTH_DEFAULT,
     MAX_FILENAME_LENGTH_MIN,
     MAX_FILENAME_LENGTH_MAX,
     MESSAGES,
     RECENT_CONTEXT_WINDOW_MS,
+    DOWNLOAD_DIAGNOSTICS_STORAGE_KEY,
     SETTINGS_STORAGE_KEY,
     SOURCES
   };

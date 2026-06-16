@@ -1027,6 +1027,59 @@ test("dCollection public resource PDF url shares id with detail context", () => 
   assert.equal(entry.context.metadata.titleMain, dcolMeta.titleMain);
 });
 
+test("download diagnostics are opt-in and record matching reasons", () => {
+  background._state.reset();
+  const item = {
+    tabId: 7,
+    url: "https://scholar.dcollection.net/public_resource/pdf/200000611177_20260616105509.pdf",
+    filename: "200000611177_20260616105509.pdf"
+  };
+
+  assert.equal(background.recordDownloadDiagnostic({
+    status: "no-context",
+    reason: "disabled-by-default",
+    downloadItem: item
+  }), null);
+  assert.equal(background._state.recentDiagnostics.length, 0);
+
+  background._state.setDiagnosticsEnabled(true);
+  const diagnostic = background.recordDownloadDiagnostic({
+    status: "renamed",
+    reason: "dcollection-detail-fetch",
+    downloadItem: item,
+    suggestedFilename: "임초롱·주상훈, 2022, 「경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징」, 『문화재』 55(1), 국립문화재연구소.pdf",
+    entry: {
+      tabId: 7,
+      frameId: 0,
+      diagnosticMatch: {
+        score: 12,
+        reason: "dcollection-detail-fetch",
+        itemId: "dcollection:200000611177",
+        contextId: "dcollection:200000611177"
+      },
+      context: {
+        pageUrl: "https://scholar.dcollection.net/srch/srchDetail/200000611177",
+        downloadUrl: item.url,
+        metadata: {
+          authors: ["임초롱", "주상훈"],
+          titleMain: "경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징",
+          source: "dCollection",
+          year: "2022"
+        }
+      }
+    }
+  });
+
+  assert.equal(background._state.recentDiagnostics.length, 1);
+  assert.equal(diagnostic.status, "renamed");
+  assert.equal(diagnostic.itemId, "dcollection:200000611177");
+  assert.equal(diagnostic.match.reason, "dcollection-detail-fetch");
+  assert.equal(diagnostic.context.metadata.titleMain, "경운궁 흥덕전의 조영 및 사용 연혁과 설행된 의례의 특징");
+
+  background.clearDownloadDiagnostics();
+  assert.equal(background._state.recentDiagnostics.length, 0);
+});
+
 test("background fetches dCollection detail metadata for direct public resource PDF", () => new Promise((resolve, reject) => {
   background._state.reset();
   const originalFetch = global.fetch;
