@@ -70,6 +70,7 @@
 * **KRM 기초학문자료센터** (`krm.or.kr`)
 * **국회도서관** (`nanet.go.kr`)
 * **국립중앙도서관** (`nl.go.kr`)
+* **서울역사아카이브 연구 논문** (`history.seoul.go.kr`)
 * **Google 학술 검색** (`scholar.google.co.kr`)
 * **dCollection** (대학별 자체 도서관 학위논문 서비스)
 * *및 상기 사이트들이 연동되는 국내 모든 대학교 도서관 프록시 도메인*

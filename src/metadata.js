@@ -129,6 +129,19 @@
     return { volume, issue };
   }
 
+  function splitJournalAndTrailingVolume(value) {
+    const text = cleanValue(value);
+    const match = text.match(/^(.+?)\s+(\d{1,4})(?:\s*\((\d{1,4})\))?$/);
+    if (!match) {
+      return { journalName: text, volume: "", issue: "" };
+    }
+    return {
+      journalName: cleanValue(match[1]),
+      volume: match[2] || "",
+      issue: match[3] || ""
+    };
+  }
+
   function splitAuthors(value) {
     const robustText = removeNonKoreanParen(fixTypography(value))
       .replace(/\s+\d+$/g, "")
@@ -885,9 +898,9 @@
 
     // 레이블 목록: fallback 변수를 비코드(\uXXXX)로 중복 정의하던 방식 제거 — 유일한 레이블 목록으로 통합
     const authors     = valueByLabels(facts, ["\uc800\uc790", "\uc5f0\uad6c\uc790", "Authors", "Author"]);
-    const journal     = valueByLabels(facts, ["\ud559\uc220\uc9c0\uba85", "\ud559\uc220\uc9c0", "\uac04\ud589\ubb3c\uba85", "\ub17c\ubb38\uc9d1", "\ub17c\ubb38\uc9c0", "\uc800\ub110/\ud504\ub85c\uc2dc\ub529\uba85", "Journal", "Journal/Proceedings"]);
+    const journal     = valueByLabels(facts, ["\ud559\uc220\uc9c0\uba85", "\ud559\uc220\uc9c0", "\uac8c\uc7ac\uc9c0", "\uac04\ud589\ubb3c\uba85", "\ub17c\ubb38\uc9d1", "\ub17c\ubb38\uc9c0", "\uc800\ub110/\ud504\ub85c\uc2dc\ub529\uba85", "Journal", "Journal/Proceedings"]);
     const publisher   = valueByLabels(facts, ["\ubc1c\ud589\uae30\uad00", "\ucd9c\ud310\uc0ac", "\ubc1c\ud589\ucc98", "\ubc1c\ud589\ucc98\uba85", "\uc18c\uc18d\uae30\uad00", "Publisher"]);
-    const year        = valueByLabels(facts, ["\ubc1c\ud589\uc5f0\ub3c4", "\ubc1c\ud589\ub144\ub3c4", "\ubc1c\ud589\ub144", "\uc5f0\ub3c4", "\ud559\uc704\uc218\uc5ec\ub144\uc6d4", "Year", "\ubc1c\ud589\uc77c", "\uac8c\uc7ac\ub144\uc6d4", "\ubc1c\uac04\ub144\uc6d4", "Published"]);
+    const year        = valueByLabels(facts, ["\ubc1c\ud589\uc5f0\ub3c4", "\ubc1c\ud589\ub144\ub3c4", "\ubc1c\ud589\ub144", "\ubc1c\ud589", "\uc5f0\ub3c4", "\ud559\uc704\uc218\uc5ec\ub144\uc6d4", "Year", "\ubc1c\ud589\uc77c", "\uac8c\uc7ac\ub144\uc6d4", "\ubc1c\uac04\ub144\uc6d4", "Published"]);
     const pages       = valueByLabels(facts, ["\uc218\ub85d\uba74", "\ud398\uc774\uc9c0", "\ucabd\uc218", "Pages", "Page"]);
     const pageFirst   = valueByLabels(facts, ["\uc2dc\uc791\ud398\uc774\uc9c0", "\uc2dc\uc791 \ud398\uc774\uc9c0", "Start Page", "First Page"]);
     const pageLast    = valueByLabels(facts, ["\ub05d\ud398\uc774\uc9c0", "\ub05d \ud398\uc774\uc9c0", "End Page", "Last Page"]);
@@ -902,7 +915,10 @@
       next.authors = splitAuthors(authors);
     }
     if (!next.journalName && journal) {
-      next.journalName = journal;
+      const parsedJournal = splitJournalAndTrailingVolume(journal);
+      next.journalName = parsedJournal.journalName;
+      next.volume = next.volume || parsedJournal.volume;
+      next.issue = next.issue || parsedJournal.issue;
     }
     if (thesisInfo) {
       const parsedThesis = parseThesisDetails(thesisInfo);
@@ -1055,6 +1071,9 @@
     }
     if (/dcollection/i.test(host) || /dcollection/i.test(parsed.pathname)) {
       return SOURCES.DCOLLECTION;
+    }
+    if (/history\.seoul\.go\.kr/i.test(host)) {
+      return SOURCES.SEOUL_HISTORY;
     }
     return SOURCES.UNKNOWN || "unknown";
   }
@@ -1390,6 +1409,9 @@
     if (isMetadataUiLabel(next.issue)) {
       next.issue = "";
     }
+    if (next.source === SOURCES.SEOUL_HISTORY && !next.publisher) {
+      next.publisher = "서울역사편찬원";
+    }
     return next;
   }
 
@@ -1415,7 +1437,8 @@
     const pairs = [
       /<tr[^>]*>\s*<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>\s*<td[^>]*>([\s\S]*?)<\/td>/gi,
       /<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi,
-      /<li[^>]*>\s*<(?:span|strong|b|em)[^>]*>([\s\S]*?)<\/(?:span|strong|b|em)>([\s\S]*?)<\/li>/gi
+      /<li[^>]*>\s*<(?:span|strong|b|em)[^>]*>([\s\S]*?)<\/(?:span|strong|b|em)>([\s\S]*?)<\/li>/gi,
+      /<li[^>]*>[\s\S]*?<(?:span|strong|b|em)[^>]*>([\s\S]*?)<\/(?:span|strong|b|em)>\s*<(?:span|strong|b|em|p|div)[^>]*>([\s\S]*?)<\/(?:span|strong|b|em|p|div)>[\s\S]*?<\/li>/gi
     ];
     pairs.forEach((pattern) => {
       let match;

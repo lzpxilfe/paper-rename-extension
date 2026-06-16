@@ -644,6 +644,41 @@ test("eArticle metadata removes trailing navigation link labels", () => {
   assert.ok(!rendered.includes("바로가기"));
 });
 
+test("Seoul History archive research article metadata is parsed", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head>
+      <title>조선 전기 청기와의 제작과 유약 원료의 수급문제</title>
+      <meta property="og:title" content="조선 전기 청기와의 제작과 유약 원료의 수급문제">
+    </head>
+    <body>
+      <h3 class="fs40">조선 전기 청기와의 제작과 유약 원료의 수급문제</h3>
+      <ol>
+        <li><i class="dot"></i><b>저자</b><span>이지희</span></li>
+        <li><i class="dot"></i><b>발행</b><span>2022-06</span></li>
+        <li><i class="dot"></i><b>게재지</b><span>서울과 역사 111</span></li>
+      </ol>
+      <a href="/common/file/fileDown.do?accSn=2212200487&amp;accTy=bbsctt&amp;ordr=0">원문 다운로드</a>
+    </body>
+    </html>
+  `, "https://history.seoul.go.kr/archive/bbsctt/view.do?bbscttSn=2212200487&sc_bbsctt_field_sn=0009&key=2210200030");
+
+  assert.equal(actual.source, "서울역사");
+  assert.deepEqual(actual.authors, ["이지희"]);
+  assert.equal(actual.titleMain, "조선 전기 청기와의 제작과 유약 원료의 수급문제");
+  assert.equal(actual.year, "2022");
+  assert.equal(actual.journalName, "서울과 역사");
+  assert.equal(actual.volume, "111");
+  assert.equal(actual.publisher, "서울역사편찬원");
+  assert.ok(constants.isAcademicSite("https://history.seoul.go.kr/common/file/fileDown.do?accSn=2212200487&accTy=bbsctt&ordr=0"));
+
+  assert.equal(
+    filename.renderFilename(actual, filename.safeSettings()),
+    "이지희, 2022, 「조선 전기 청기와의 제작과 유약 원료의 수급문제」, 『서울과 역사』 111, 서울역사편찬원.pdf"
+  );
+});
+
 test("Google Scholar meta tags are correctly parsed from HTML", () => {
   const html = `
     <!doctype html>

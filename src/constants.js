@@ -20,6 +20,7 @@
     SCIENCEON: "ScienceON",
     KRM: "KRM",
     DCOLLECTION: "dCollection",
+    SEOUL_HISTORY: "서울역사",
     UNKNOWN: "unknown"
   };
 
@@ -53,7 +54,7 @@
   const MAX_FILENAME_LENGTH_MIN = 40;
   const MAX_FILENAME_LENGTH_MAX = 240;
 
-  const ACADEMIC_DOMAINS_PATTERN = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection/i;
+  const ACADEMIC_DOMAINS_PATTERN = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection|history\.seoul\.go\.kr/i;
 
   const KNOWN_HOST_PATTERNS = [
     /riss/i,
@@ -65,7 +66,8 @@
     /koreascience/i,
     /scienceon/i,
     /krm/i,
-    /dcollection/i
+    /dcollection/i,
+    /history\.seoul\.go\.kr/i
   ];
 
   function isAcademicSite(url) {
