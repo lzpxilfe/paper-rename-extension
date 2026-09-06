@@ -12,10 +12,15 @@
                        /popOriginal/i.test(location.pathname) ||
                        /viewOriginal/i.test(location.pathname) ||
                        /원문보기|원문\s*보기|original\s*view/i.test(titleText);
-  const isLoginPage = /login|signin|oauth|session|authorize|register/i.test(location.href) || 
+  // 쿼리 파라미터(sessionId=, returnUrl=/login 등)까지 검사하면 논문 상세 페이지까지
+  // 차단되므로 경로(pathname)만 본다.
+  const isLoginPage = /login|signin|oauth|authorize|register/i.test(location.pathname) || 
                       /^(로그인|인증|login|signin)$/i.test(titleText) ||
                       /(?:로그인\s*페이지|도서관\s*로그인|library\s*login)/i.test(titleText) ||
-                      (document.querySelector && document.querySelector('input[type="password"]') !== null);
+                      // 비밀번호 입력창이 있어도 본문이 거의 없는(로그인 전용) 화면일 때만
+                      // 로그인 페이지로 본다. 논문 사이트는 헤더에 로그인 위젯을 두는 경우가 많다.
+                      (document.querySelector && document.querySelector('input[type="password"]') !== null &&
+                       document.body && (document.body.innerText || "").trim().length < 400);
   if (!constants || !metadataModule || !filenameModule) {
     return;
   }

@@ -1215,7 +1215,22 @@ test("constants.isBlacklistedSite returns true for blacklisted domains", () => {
   assert.ok(constants.isBlacklistedSite("https://www.heritage.go.kr/download/file"));
   assert.ok(constants.isBlacklistedSite("https://www.e-minwon.go.kr/download/file"));
   assert.ok(constants.isBlacklistedSite("http://116.67.83.213/report/file.pdf"));
+  assert.ok(constants.isBlacklistedSite("https://www.cihc.or.kr/kor/22/archive/01"));
+  assert.ok(constants.isBlacklistedSite("https://www.iha.go.kr/service/search_all_item_view.nihc"));
+  assert.ok(constants.isBlacklistedSite("https://digital.khs.go.kr/report/detail"));
   assert.ok(!constants.isBlacklistedSite("https://www.riss.kr/search/detail/DetailView.do"));
+});
+
+test("background passes through archreport-hosted archive downloads", () => {
+  background._state.reset();
+  for (const url of [
+    "https://www.cihc.or.kr/archive/prog/archiveCate/kor/03/download.do?groupNo=20244",
+    "https://www.iha.go.kr/service/get_item_filedownload.ajax?item_rowid=96455",
+    "https://digital.khs.go.kr/report/filedownload.do?id=12345"
+  ]) {
+    assert.ok(background.isBlacklistedDownload({ url, filename: "report.pdf" }), url);
+    assert.ok(!background.isPotentialPaperDownload({ url, filename: "report.pdf" }), url);
+  }
 });
 
 test("background passes through archreport downloads", () => {
@@ -1468,6 +1483,106 @@ test("tabs openerTabId relation copies fresh parent context", () => {
   const copied = background._state.pendingContexts.find((entry) => entry.tabId === 41);
   assert.ok(copied);
   assert.equal(copied.context.metadata.titleMain, "fresh parent paper");
+});
+
+test("constants.isAcademicSite recognizes university proxy hosts", () => {
+  assert.ok(constants.isAcademicSite(
+    "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/article/detail/123"
+  ));
+  assert.ok(constants.isAcademicSite(
+    "https://riss-kr.proxy.univ.ac.kr/search/detail/DetailView.do"
+  ));
+  assert.ok(constants.isAcademicSite(
+    "https://proxy.univ.ac.kr/login?url=https://www.riss.kr/search/detail/DetailView.do"
+  ));
+  assert.ok(!constants.isAcademicSite("https://www.example.com/download/paper.pdf"));
+});
+
+test("background sanitizes contexts whose title is site UI text", () => {
+  background._state.reset();
+  const junk = (title) => ({
+    metadata: { titleMain: title, authors: ["홍길동"], year: "2024", source: "KCI" },
+    pageUrl: "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?artiId=1",
+    source: "KCI",
+    capturedAt: Date.now()
+  });
+
+  background.rememberContext(junk("논문 검색"), null);
+  background.rememberContext(junk("상세 검색"), null);
+  assert.equal(background._state.pendingContexts.length, 2);
+  assert.equal(background._state.pendingContexts[0].context.metadata.titleMain, "");
+  assert.equal(background._state.pendingContexts[1].context.metadata.titleMain, "");
+
+  background.rememberContext(junk("백제 한성기 몽촌토성의 성격과 기능"), null);
+  assert.equal(
+    background._state.pendingContexts[2].context.metadata.titleMain,
+    "백제 한성기 몽촌토성의 성격과 기능"
+  );
+});
+
+test("kci search rows ignore badges and pick the article title", () => {
+  const rowText = "[PDF] 백제 한성기 몽촌토성의 성격과 기능\n이차원\n백제학보 53 (2025) 5-60\nkci 피인용 12";
+  const meta = metadata.parseResultText(rowText, "KCI", "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereSearch.kci");
+
+  assert.equal(meta.titleMain, "백제 한성기 몽촌토성의 성격과 기능");
+});
+
+test("kci search pages are treated as list pages", () => {
+  assert.ok(metadata.isAcademicListPage(
+    "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereSearch.kci?query=x"
+  ));
+  assert.ok(!metadata.isAcademicListPage(
+    "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART002729695"
+  ));
+});
+
+test("detectSource recognizes viewer and print pages on known hosts", () => {
+  assert.equal(metadata.detectSource("https://www.kiss.kstudy.com/Viewer/Pdf/12345"), "KISS");
+  assert.equal(metadata.detectSource("https://www.dbpia.co.kr/pdf/inner?nodeId=NODE1"), "DBpia");
+  assert.equal(metadata.detectSource("https://www.earticle.net/Article/Print/338888"), "eArticle");
+});
+
+test("citation meta tags fill gaps left by heuristic extraction", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head>
+      <meta name="citation_journal_title" content="한국문화연구">
+      <meta name="citation_publisher" content="한국문화학회">
+      <meta name="citation_publication_date" content="2023">
+      <meta name="citation_volume" content="44">
+      <meta name="citation_firstpage" content="1">
+      <meta name="citation_lastpage" content="28">
+      <meta name="citation_author" content="김철수">
+      <title>갑오경장 이후 동래부의 대일 인식 변화</title>
+    </head>
+    <body><h1>갑오경장 이후 동래부의 대일 인식 변화</h1></body>
+    </html>
+  `, "https://www.example-journal.ac.kr/article/view?page=1");
+
+  assert.equal(actual.titleMain, "갑오경장 이후 동래부의 대일 인식 변화");
+  assert.equal(actual.journalName, "한국문화연구");
+  assert.equal(actual.publisher, "한국문화학회");
+  assert.equal(actual.year, "2023");
+  assert.equal(actual.volume, "44");
+  assert.equal(actual.pageFirst, "1");
+  assert.equal(actual.pageLast, "28");
+  assert.deepEqual(actual.authors, ["김철수"]);
+});
+
+test("year falls back to citation date before scanning body text", () => {
+  const actual = metadata.parseFixtureHtml(`
+    <!doctype html>
+    <html lang="ko">
+    <head><meta name="citation_publication_date" content="2019"></head>
+    <body>
+      <h1>유물 보존처리 사례 연구</h1>
+      <p>2024년 기준 등재 논문은 1234편입니다. 조회수 2020회.</p>
+    </body>
+    </html>
+  `, "https://www.koreascience.or.kr/article/JAKO201912345678.page");
+
+  assert.equal(actual.year, "2019");
 });
 
 module.exports = Promise.all(pendingTests);

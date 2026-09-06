@@ -17,6 +17,8 @@ let recentDiagnostics = [];
 let diagnosticsEnabled = false;
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
 const OPENER_CONTEXT_COPY_WINDOW_MS = 5000;
+// onDeterminingFilename 안에서 fetch가 다운로드를 붙잡고 있지 않도록 상한을 둔다.
+const DCOLLECTION_FETCH_TIMEOUT_MS = 3000;
 
 function hasChromeApi(path) {
   let current = typeof chrome !== "undefined" ? chrome : null;
@@ -448,9 +450,16 @@ function fetchDcollectionContext(downloadItem, callback) {
     callback(null);
     return;
   }
-  fetch(detail.url, { credentials: "include" })
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), DCOLLECTION_FETCH_TIMEOUT_MS)
+    : null;
+  fetch(detail.url, { credentials: "include", signal: controller ? controller.signal : undefined })
     .then((response) => response && response.ok ? response.text() : "")
     .then((html) => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       if (!html) {
         callback(null);
         return;
@@ -573,7 +582,10 @@ function selectContextMatch(downloadItem, nowValue) {
   if ((!best || best.score < 3) && isLikelyViewerDownload(downloadItem)) {
     const recent = pendingContexts
       .filter((entry) => {
-        return isFreshContextEntry(entry, now) && entry.context.metadata && entry.context.metadata.titleMain;
+        const title = entry && entry.context && entry.context.metadata && entry.context.metadata.titleMain;
+        return isFreshContextEntry(entry, now) && title &&
+          (!metadataModule || typeof metadataModule.isUsableTitle !== "function" ||
+            metadataModule.isUsableTitle(title));
       })
       .sort((left, right) => right.context.capturedAt - left.context.capturedAt)[0];
     if (recent) {
@@ -647,6 +659,13 @@ function rememberContext(context, sender) {
   const next = Object.assign({}, context, {
     capturedAt: Number(context.capturedAt) || Date.now()
   });
+  // 사이트 UI 문구(검색 결과, 메뉴 등)가 제목에 섞여 들어오면 파일명을 오염시키므로
+  // 저장 시 제목만 무효화한다. 컨텍스트 자체는 탭/호스트 매칭과 RISS 보강 대기에 필요하다.
+  if (next.metadata && next.metadata.titleMain && metadataModule &&
+      typeof metadataModule.isUsableTitle === "function" &&
+      !metadataModule.isUsableTitle(next.metadata.titleMain)) {
+    next.metadata = Object.assign({}, next.metadata, { titleMain: "" });
+  }
   pendingContexts.push({ context: next, tabId, frameId });
   cleanupContexts(Date.now());
   persistContexts();
@@ -790,13 +809,21 @@ function registerChromeListeners() {
         return false;
       }
       findContextEntry(downloadItem, (entry) => {
+        // 다운로드가 대기 중에 취소됐을 수 있으므로 suggest 호출은 안전하게 감싼다.
+        const safeSuggest = (suggestion) => {
+          try {
+            suggest(suggestion);
+          } catch (_error) {
+            consumeLastError();
+          }
+        };
         if (!entry || !entry.context || !entry.context.metadata) {
           recordDownloadDiagnostic({
             status: "no-context",
             reason: "no-matching-metadata",
             downloadItem
           });
-          suggest();
+          safeSuggest();
           return;
         }
         const metadata = Object.assign({}, entry.context.metadata, {
@@ -810,7 +837,7 @@ function registerChromeListeners() {
           entry,
           suggestedFilename: filename
         });
-        suggest({
+        safeSuggest({
           filename,
           conflictAction: "uniquify"
         });

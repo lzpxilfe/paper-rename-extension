@@ -1092,6 +1092,10 @@
       const path = parsed.pathname.toLowerCase();
       if (/riss/i.test(host) && /\/search\/(?:search|result)/i.test(path)) return true;
       if (/dcollection/i.test(host) && /^\/search(?:\/|$)/i.test(path)) return true;
+      // KCI 검색 결과 화면은 페이지 전체 추출이 사이트 문구로 오염되므로
+      // 목록 페이지로 간주해 행(row) 단위 파싱만 사용한다.
+      // (논문 상세는 ciSereArtiview.kci, 검색 목록은 아래 패턴. path는 소문자화된 값이다)
+      if (/kci\.go\.kr/i.test(host) && /(?:sinesearch|sinereartisear|serearticlesearch\/ciseresearch|po\/search\/poartisear)/i.test(path)) return true;
     } catch (_e) {}
     return false;
   }
@@ -1110,13 +1114,13 @@
     if (/kci\.go\.kr/i.test(host) && /\/kciportal\//i.test(parsed.pathname)) {
       return SOURCES.KCI;
     }
-    if (/kiss.*kstudy/i.test(host) && /\/Detail/i.test(parsed.pathname)) {
+    if (/kiss.*kstudy/i.test(host)) {
       return SOURCES.KISS;
     }
-    if (/dbpia/i.test(host) && /\/journal\/(?:articleDetail|detail)/i.test(parsed.pathname)) {
+    if (/dbpia/i.test(host)) {
       return SOURCES.DBPIA;
     }
-    if (/earticle/i.test(host) && /\/Article\//i.test(parsed.pathname)) {
+    if (/earticle/i.test(host)) {
       return SOURCES.EARTICLE;
     }
     if (/scholar.*kyobobook/i.test(host)) {
@@ -1143,7 +1147,8 @@
   function extractTitle(doc, source) {
     const sourceTitleSelectors = {
       RISS: ["#thesisInfoDiv .title", "#thesisInfoDiv h3", ".thesisInfo .title"],
-      KCI: ["#artiTitle", ".article-title", "h3", "h2"],
+      // KCI는 h3/h2가 사이트 UI 문구(메뉴, 섹션 제목)인 경우가 많아 일반 헤딩 폴백을 쓰지 않는다.
+      KCI: ["#artiTitle", ".article-title", "meta[name='citation_title']"],
       KISS: [".articleTitle", ".title", "h3", "h2"],
       DBpia: [".thesis__tit", ".article-title", ".title", "h1", "h2"],
       eArticle: [".articleTitle", ".title", "h3", "h2"],
@@ -1161,7 +1166,9 @@
       .concat([metaTitle, cleanValue(doc && doc.title)])
       .filter(Boolean);
     const title = candidates.find((candidate) => isUsableTitle(candidate)) || "";
-    return splitTitle(title.replace(/\s*-\s*(RISS|KCI|KISS|DBpia|eArticle|교보문고|스콜라|KoreaScience|ScienceON|KRM).*$/i, ""));
+    return splitTitle(title
+      .replace(/\s*[-:]\s*(한국학술지인용색인|Korea Citation Index|한국연구재단)\s*.*$/i, "")
+      .replace(/\s*-\s*(RISS|KCI|KISS|DBpia|eArticle|교보문고|스콜라|KoreaScience|ScienceON|KRM).*$/i, ""));
   }
 
   function isUsableTitle(value) {
@@ -1170,6 +1177,11 @@
       return false;
     }
     if (/(?:RISS\s*\uac80\uc0c9|\ud1b5\ud569\uac80\uc0c9|\uac80\uc0c9\uacb0\uacfc|KCI\s*\uc6d0\ubb38|\ub17c\ubb38\uc815\ubcf4|\ucd08\ub85d\s*\uc5f4\uae30\s*\ub2eb\uae30\s*\ubc84\ud2bc|\uc6d0\ubb38\s*\ub0b4\ub824\ubc1b\uae30)/i.test(text)) {
+      return false;
+    }
+    // 검색 화면의 UI 제목들(논문 검색, 상세 검색, 검색 결과 등)은 논문 제목이 아니다.
+    // 접두/접미 앵커로 한정해 "검색엔진 연구" 같은 실제 논문 제목은 통과시킨다.
+    if (/^(?:논문|상세|통합|기본|전체|간단|추천|인기|최근|키워드)?\s*(?:검색(?:어|결과|창)?|조회)\s*(?:결과|창)?$/.test(text)) {
       return false;
     }
     if (/(?:Copyright|rights\s*reserved|KERIS|학술연구정보서비스|대국민\s*서비스|국내·국외\s*학술정보)/i.test(text)) {
@@ -1306,8 +1318,11 @@
     const lines = String(text || "")
       .split(/\n|\r|\s{2,}/)
       .map(cleanValue)
+      // 검색 행에 붙는 배지/버튼 문구를 제거한다 ([PDF] 아이콘, kci 배지 등).
+      .map((line) => line.replace(/^\[?\s*(?:PDF|HWP|원문|초록)\s*\]?\s*:?/i, "").trim())
       .filter(Boolean)
-      .filter((line) => !/^(KCI등재|무료|유료|기관 내 무료|원문보기|목차검색조회|음성듣기|\d+|F|M|W)$/.test(line));
+      .filter((line) => !/^(KCI등재|무료|유료|기관 내 무료|원문보기|목차검색조회|음성듣기|\d+|F|M|W)$/i.test(line))
+      .filter((line) => !/^(kci|scielo|pdf|피인용\s*횟수?|인용하기|인용|초록|미리보기|다운로드|목차|원문|저자\s*정보|논문\s*정보|공유|출력|검색|상세\s*검색|통합\s*검색)$/i.test(line));
 
     const joined = lines.join(" | ");
     const out = blankMetadata(source, pageUrl || "");
@@ -1423,6 +1438,18 @@
     if (source === SOURCES.DCOLLECTION) {
       meta = mergePreferExtra(meta, parseDcollectionDom(doc));
     }
+    // citation_* 메타 태그를 제공하는 사이트(KCI, KoreaScience, eArticle 등)는
+    // 휴리스틱이 비운 칸만 출판사 제공 값으로 메운다. 덮어쓰지 않는다.
+    const citationMeta = parseGoogleScholarMetaTags(doc);
+    ["journalName", "publisher", "volume", "issue", "pageFirst", "pageLast"].forEach((key) => {
+      if (!meta[key] && citationMeta[key]) {
+        meta[key] = citationMeta[key];
+      }
+    });
+    if ((!Array.isArray(meta.authors) || !meta.authors.length) &&
+        Array.isArray(citationMeta.authors) && citationMeta.authors.length) {
+      meta.authors = citationMeta.authors;
+    }
     if (!meta.titleMain) {
       Object.assign(meta, extractTitle(doc, source));
     }
@@ -1436,7 +1463,14 @@
       meta.authors = extractAuthorsBySelector(doc);
     }
     if (!meta.year) {
-      meta.year = parseYear(textOf(doc.body || doc.documentElement || doc));
+      // 본문에서 아무 4자리 숫자나 잡는 폴백보다 citation_publication_date가 우선.
+      const dateMeta = metaContent(doc, [
+        "meta[name='citation_publication_date']",
+        "meta[property='citation_publication_date']",
+        "meta[name='citation_date']"
+      ]);
+      const yearFromMeta = dateMeta ? parseYear(dateMeta) : "";
+      meta.year = yearFromMeta || parseYear(textOf(doc.body || doc.documentElement || doc));
     }
     return normalizeMetadata(meta);
   }
@@ -1665,6 +1699,7 @@
     extractFromDocument,
     fixTypography,
     isAcademicListPage,
+    isUsableTitle,
     normalizeMetadata,
     normalizeSpaces,
     parseFixtureHtml,

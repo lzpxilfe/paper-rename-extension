@@ -60,7 +60,7 @@
   const MAX_FILENAME_LENGTH_MIN = 40;
   const MAX_FILENAME_LENGTH_MAX = 240;
 
-  const ACADEMIC_DOMAINS_PATTERN = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection|history\.seoul\.go\.kr/i;
+  const ACADEMIC_DOMAINS_PATTERN = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|scholar.*kyobobook|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection|history\.seoul\.go\.kr/i;
 
   const KNOWN_HOST_PATTERNS = [
     /riss/i,
@@ -84,6 +84,18 @@
       if (ACADEMIC_DOMAINS_PATTERN.test(host)) {
         return true;
       }
+      // 대학 도서관 프록시(EZproxy 등)는 대상 호스트를 하이픈으로 인코딩한다.
+      // 예: scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr, riss-kr.proxy.univ.ac.kr
+      const hyphenDecoded = host.replace(/-/g, ".");
+      if (hyphenDecoded !== host && ACADEMIC_DOMAINS_PATTERN.test(hyphenDecoded)) {
+        return true;
+      }
+      // 경로/쿼리에 원본 주소를 담는 프록시: /login?url=https://www.riss.kr/...
+      // (파일 경로에 도메인 단어가 섞인 일반 URL 오염을 막기 위해 http 표기가 있을 때만 본다)
+      const embedded = `${parsed.pathname}${parsed.search}`;
+      if (/https?(?::|%3A)/i.test(embedded) && ACADEMIC_DOMAINS_PATTERN.test(embedded)) {
+        return true;
+      }
       if (parsed.protocol === "blob:" && parsed.pathname) {
         try {
           return ACADEMIC_DOMAINS_PATTERN.test(new URL(parsed.pathname).hostname);
@@ -97,7 +109,10 @@
     }
   }
 
-  const BLACKLIST_DOMAINS_PATTERN = /heritage\.go\.kr|nrich\.go\.kr|nihc\.go\.kr|gogung\.go\.kr|khs\.go\.kr|cha\.go\.kr|nch\.go\.kr|e-minwon\.go\.kr|116\.67\.83\.213/i;
+  // archreport(국가유산 보고서 파일명 정리) 확장이 파일명을 바꾸는 국가유산 사이트들과
+  // 공존하기 위한 블랙리스트다. 이 도메인에서는 컨텍스트를 수집하지 않고,
+  // 다운로드 파일명 변경에도 개입하지 않는다.
+  const BLACKLIST_DOMAINS_PATTERN = /heritage\.go\.kr|nrich\.go\.kr|nihc\.go\.kr|gogung\.go\.kr|khs\.go\.kr|cha\.go\.kr|nch\.go\.kr|e-minwon\.go\.kr|cihc\.or\.kr|iha\.go\.kr|116\.67\.83\.213/i;
 
   function isBlacklistedSite(url) {
     if (!url) return false;
