@@ -1348,10 +1348,22 @@
           // KCI 검색 행: 저자1 | 저자2 | 발행기관 | 학술지명 | 권호 | 페이지 | 날짜 | 분야
           // 기관명이 나오기 전까지의 항목을 저자로 본다.
           const fieldIndex = parts.findIndex((part) =>
-            /(?:학회|학보|기관|협회|연구소|연구원|대학교|학술지|재단|저널|journal)/i.test(part)
+            /(?:학회|학보|기관|협회|연구소|연구원|대학교|학술지|재단|저널|진흥원|journal)/i.test(part)
           );
           const authorParts = fieldIndex > 0 ? parts.slice(0, fieldIndex) : [parts[0]];
           out.authors = splitAuthors(authorParts.join(";"));
+          // 발행기관/학술지명은 위치로 구분한다 (기관명 다음이 학술지명).
+          if (fieldIndex >= 0) {
+            if (!out.publisher) {
+              out.publisher = parts[fieldIndex];
+            }
+            const journalCandidate = parts.slice(fieldIndex + 1).find((part) =>
+              !/^\(?\d+\)?$|pp\.|\d{4}|[~\-]/.test(part)
+            );
+            if (journalCandidate && !out.journalName) {
+              out.journalName = journalCandidate;
+            }
+          }
         } else {
           out.authors = splitAuthors(parts[0]);
         }
@@ -1397,7 +1409,9 @@
     }
     if (parts.length >= 4) {
       const likelyJournal = parts.find((part) => /학보|학회지|연구|논문|저널|Journal|Review/i.test(part));
-      out.journalName = likelyJournal || out.journalName;
+      if (!out.journalName) {
+        out.journalName = likelyJournal || "";
+      }
       if (!out.publisher) {
         out.publisher = parts.find((part) => /학회|대학교|대학원|연구소|박물관|기관/.test(part)) || "";
       }
