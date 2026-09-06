@@ -1527,6 +1527,38 @@ test("kci search rows ignore badges and pick the article title", () => {
   assert.equal(meta.titleMain, "백제 한성기 몽촌토성의 성격과 기능");
 });
 
+test("kci unified search row parses authors, journal, publisher, and year", () => {
+  const rowText = [
+    "4.",
+    "KCI 등재",
+    "충주 칠금동 제철유적의 조성과 운영 주체의 변천에 관한 고찰",
+    "정태영 | 정락현 | 백제학회 | 백제학보 | (54) | pp.41~93 | 2025.11 | 한국고대사",
+    "KCI 피인용 횟수 : 0 | KCI 원문"
+  ].join("\n");
+  const meta = metadata.parseResultText(rowText, "KCI", "https://www.kci.go.kr/kciportal/po/search/poTotalSearList.kci");
+
+  assert.equal(meta.titleMain, "충주 칠금동 제철유적의 조성과 운영 주체의 변천에 관한 고찰");
+  assert.deepEqual(meta.authors, ["정태영", "정락현"]);
+  assert.equal(meta.journalName, "백제학보");
+  assert.equal(meta.publisher, "백제학회");
+  assert.equal(meta.year, "2025");
+});
+
+test("site tagline sentences are not usable titles", () => {
+  assert.equal(metadata.isUsableTitle("KCI 국내학술지 인용색인 정보 포털입니다."), false);
+  assert.equal(metadata.isUsableTitle("논문 검색"), false);
+  assert.equal(metadata.isUsableTitle("백제 한성기 몽촌토성의 성격과 기능"), true);
+});
+
+test("kci unified search result page is treated as a list page", () => {
+  assert.ok(metadata.isAcademicListPage(
+    "https://www.kci.go.kr/kciportal/po/search/poTotalSearList.kci?searchText=%EC%A0%9C%EC%B2%A0%EC%9C%A0%EC%A0%81"
+  ));
+  assert.ok(!metadata.isAcademicListPage(
+    "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART002729695"
+  ));
+});
+
 test("kci search pages are treated as list pages", () => {
   assert.ok(metadata.isAcademicListPage(
     "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereSearch.kci?query=x"

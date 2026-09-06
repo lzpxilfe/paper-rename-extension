@@ -1094,8 +1094,8 @@
       if (/dcollection/i.test(host) && /^\/search(?:\/|$)/i.test(path)) return true;
       // KCI 검색 결과 화면은 페이지 전체 추출이 사이트 문구로 오염되므로
       // 목록 페이지로 간주해 행(row) 단위 파싱만 사용한다.
-      // (논문 상세는 ciSereArtiview.kci, 검색 목록은 아래 패턴. path는 소문자화된 값이다)
-      if (/kci\.go\.kr/i.test(host) && /(?:sinesearch|sinereartisear|serearticlesearch\/ciseresearch|po\/search\/poartisear)/i.test(path)) return true;
+      // (path는 소문자화된 값이다. 논문 상세는 ciSereArtiView.kci)
+      if (/kci\.go\.kr/i.test(host) && /(?:searlist|artilist|artisear|ciseresearch)\.kci/i.test(path)) return true;
     } catch (_e) {}
     return false;
   }
@@ -1197,6 +1197,10 @@
       return false;
     }
     if (/^(구분|순서|번호|목록|선택|기능|열기|닫기|보기|상세|정보|검색)$/.test(text)) {
+      return false;
+    }
+    // 사이트 안내 문구("KCI 국내학술지 인용색인 정보 포털입니다." 등)는 제목이 아니다.
+    if (/입니다\.?$/.test(text)) {
       return false;
     }
     return /[가-힣A-Za-z0-9]/.test(text);
@@ -1321,8 +1325,9 @@
       // 검색 행에 붙는 배지/버튼 문구를 제거한다 ([PDF] 아이콘, kci 배지 등).
       .map((line) => line.replace(/^\[?\s*(?:PDF|HWP|원문|초록)\s*\]?\s*:?/i, "").trim())
       .filter(Boolean)
-      .filter((line) => !/^(KCI등재|무료|유료|기관 내 무료|원문보기|목차검색조회|음성듣기|\d+|F|M|W)$/i.test(line))
-      .filter((line) => !/^(kci|scielo|pdf|피인용\s*횟수?|인용하기|인용|초록|미리보기|다운로드|목차|원문|저자\s*정보|논문\s*정보|공유|출력|검색|상세\s*검색|통합\s*검색)$/i.test(line));
+      .filter((line) => !/^(KCI등재|무료|유료|기관 내 무료|원문보기|목차검색조회|음성듣기|\d+\.?|F|M|W)$/i.test(line))
+      .filter((line) => !/^(kci\s*(?:등재|후보|엑셀런스)?|scielo|pdf|피인용\s*횟수?|인용하기|인용|초록|미리보기|다운로드|목차|원문|저자\s*정보|논문\s*정보|공유|출력|검색|상세\s*검색|통합\s*검색)$/i.test(line))
+      .filter((line) => !/피인용\s*횟수\s*[:：]|kci\s*원문/i.test(line));
 
     const joined = lines.join(" | ");
     const out = blankMetadata(source, pageUrl || "");
@@ -1339,7 +1344,17 @@
     if (pipeLine) {
       parts = pipeLine.split("|").map(cleanValue).filter(Boolean);
       if (parts.length) {
-        out.authors = splitAuthors(parts[0]);
+        if (source === SOURCES.KCI) {
+          // KCI 검색 행: 저자1 | 저자2 | 발행기관 | 학술지명 | 권호 | 페이지 | 날짜 | 분야
+          // 기관명이 나오기 전까지의 항목을 저자로 본다.
+          const fieldIndex = parts.findIndex((part) =>
+            /(?:학회|학보|기관|협회|연구소|연구원|대학교|학술지|재단|저널|journal)/i.test(part)
+          );
+          const authorParts = fieldIndex > 0 ? parts.slice(0, fieldIndex) : [parts[0]];
+          out.authors = splitAuthors(authorParts.join(";"));
+        } else {
+          out.authors = splitAuthors(parts[0]);
+        }
       }
     } else if (joined.length <= 50) {
       parts = joined.split("|").map(cleanValue).filter(Boolean);
