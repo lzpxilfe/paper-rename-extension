@@ -200,11 +200,12 @@
     if (/(?:Copyright|rights\s*reserved|KERIS|학술연구|대국민\s*서비스)/i.test(text)) {
       return "";
     }
-    const koreanSafe = text.match(/[\uac00-\ud7a3]{2,}(?:\s*[\u00b7\u318d]\s*[\uac00-\ud7a3]{2,})*/);
+    // 공백으로 분리된 한국어 토큰(타케우치 칸타 등 외来 이름 한글표기)도 하나의 이름으로 유지한다.
+    const koreanSafe = text.match(/[\uac00-\ud7a3]{2,}(?:\s*[\u00b7\u318d]\s*[\uac00-\ud7a3]{2,})*(?:\s+[\uac00-\ud7a3]{2,}){0,2}/);
     if (koreanSafe) {
       text = koreanSafe[0];
     }
-    const korean = text.match(/[가-힣]{2,}(?:\s*[·ㆍ]\s*[가-힣]{2,})*/);
+    const korean = text.match(/[가-힣]{2,}(?:\s*[·ㆍ]\s*[가-힣]{2,}|\s+[가-힣]{2,}){0,2}/);
     if (korean) {
       text = korean[0];
     }
@@ -447,6 +448,15 @@
 
     const authorText = qAll(doc, ".author a, .author, [class*='author'] a")
       .map(textOf)
+      // KCI 형식 "타케우치 칸타 /Takeuchi Kanta"의 로마자 표기는 별도 저자로 섞이므로
+      // 한국어 표기가 있는 경우 앞부분만 남긴다.
+      .map((text) => {
+        const slashParts = String(text || "").split(/\s*\/\s*/);
+        if (slashParts.length > 1 && /[가-힣]/.test(slashParts[0]) && /^[A-Za-z\s.,'-]+$/.test(slashParts[1] || "")) {
+          return slashParts[0];
+        }
+        return text;
+      })
       .filter(Boolean)
       .join(";");
     const authors = splitAuthors(authorText);
@@ -1315,7 +1325,7 @@
       out.pageFirst = out.pageFirst || info[3];
       out.pageLast = out.pageLast || info[4];
     }
-    const publisher = source.match(/발행기관\s*:\s*(.+?)(?=\s*(?:연구분야|저자|초록|키워드|학술지명|발행년도|페이지|권호|원문|피인용|참고문헌|목차|음성|$))/i);
+    const publisher = source.match(/발행기관\s*:\s*(.+?)(?=\s*(?:이\s*기관|연구분야|저자|초록|키워드|학술지명|발행년도|페이지|권호|원문|피인용|참고문헌|목차|음성|$))/i);
     if (publisher && !out.publisher) {
       const val = cleanValue(publisher[1]);
       if (val.length <= 100) {
