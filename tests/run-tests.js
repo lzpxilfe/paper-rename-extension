@@ -1528,12 +1528,21 @@ test("kci search rows ignore badges and pick the article title", () => {
 });
 
 test("kci unified search row parses authors, journal, publisher, and year", () => {
+  // 실제 KCI innerText는 파이프 없이 줄바꿈으로 필드가 분리된다.
   const rowText = [
     "4.",
     "KCI 등재",
     "충주 칠금동 제철유적의 조성과 운영 주체의 변천에 관한 고찰",
-    "정태영 | 정락현 | 백제학회 | 백제학보 | (54) | pp.41~93 | 2025.11 | 한국고대사",
-    "KCI 피인용 횟수 : 0 | KCI 원문"
+    "정태영",
+    "정락현",
+    "백제학회",
+    "백제학보",
+    "(54)",
+    "pp.41~93",
+    "2025.11",
+    "한국고대사",
+    "KCI 피인용 횟수 : 0",
+    "KCI 원문"
   ].join("\n");
   const meta = metadata.parseResultText(rowText, "KCI", "https://www.kci.go.kr/kciportal/po/search/poTotalSearList.kci");
 
@@ -1542,25 +1551,27 @@ test("kci unified search row parses authors, journal, publisher, and year", () =
   assert.equal(meta.journalName, "백제학보");
   assert.equal(meta.publisher, "백제학회");
   assert.equal(meta.year, "2025");
+  assert.equal(meta.pageFirst, "41");
+  assert.equal(meta.pageLast, "93");
 });
 
 test("kci unified search rows generalize across field variants", () => {
   const rows = [
     {
       text: ["1.", "KCI 후보", "강원지역 제철 유적의 특징- 10년 간의 조사 성과를 중심으로 -",
-        "심재연 | 강원문화연구소 | 강원문화연구 | 50() | pp.43~80 | 2024.12 | 기타인문학",
+        "심재연", "강원문화연구소", "강원문화연구", "50()", "pp.43~80", "2024.12", "기타인문학",
         "KCI 피인용 횟수 : 0"].join("\n"),
       expect: { authors: ["심재연"], journalName: "강원문화연구", publisher: "강원문화연구소", year: "2024" }
     },
     {
       text: ["2.", "KCI 등재", "전북 동부지역 제철유적에 대한 접근법",
-        "김상민 | 영남고고학회 | 영남고고학 | (93) | pp.29~52 | 2022.05 | 역사학",
+        "김상민", "영남고고학회", "영남고고학", "(93)", "pp.29~52", "2022.05", "역사학",
         "KCI 피인용 횟수 : 4"].join("\n"),
       expect: { authors: ["김상민"], journalName: "영남고고학", publisher: "영남고고학회", year: "2022" }
     },
     {
       text: ["3.", "KCI 후보", "무주군 제철유적의 현황과 그 의미",
-        "곽장근 | 한국학미래진흥원 | 전북학연구 | 13() | pp.1~26 | 2024.12 | 지역학",
+        "곽장근", "한국학미래진흥원", "전북학연구", "13()", "pp.1~26", "2024.12", "지역학",
         "KCI 피인용 횟수 : 0 | KCI 원문"].join("\n"),
       expect: { authors: ["곽장근"], journalName: "전북학연구", publisher: "한국학미래진흥원", year: "2024" }
     }

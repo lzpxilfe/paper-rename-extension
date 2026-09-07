@@ -1416,6 +1416,58 @@
         out.year = year;
       }
     }
+    // KCI 통합검색 행은 파이프 없이 줄바꿈으로 필드가 나뉜다:
+    // 제목 / 저자들 / 발행기관 / 학술지명 / 권호 / 페이지 / 날짜 / 분야
+    if (source === SOURCES.KCI && title) {
+      const titleIndex = lines.indexOf(title);
+      if (titleIndex >= 0) {
+        const institutionPattern = /(?:학회|학보|기관|협회|연구소|연구원|대학교|학술지|재단|저널|진흥원)/i;
+        let instIndex = -1;
+        for (let i = titleIndex + 1; i < Math.min(titleIndex + 9, lines.length); i++) {
+          if (institutionPattern.test(lines[i])) {
+            instIndex = i;
+            break;
+          }
+        }
+        if (instIndex > titleIndex + 1 && !out.authors.length) {
+          out.authors = splitAuthors(lines.slice(titleIndex + 1, instIndex).join(";"));
+        }
+        if (instIndex > 0) {
+          if (!out.publisher) {
+            out.publisher = lines[instIndex];
+          }
+          let sawJournal = false;
+          for (let i = instIndex + 1; i < Math.min(instIndex + 6, lines.length); i++) {
+            const line = lines[i];
+            if (/^pp/i.test(line)) {
+              Object.assign(out, parsePages(line));
+              continue;
+            }
+            if (/^\d{4}/.test(line)) {
+              if (!out.year) {
+                out.year = parseYear(line);
+              }
+              continue;
+            }
+            if (/^[()\d]{2,12}$/.test(line)) {
+              const vi = parseVolumeIssue(line);
+              out.volume = out.volume || vi.volume || "";
+              out.issue = out.issue || vi.issue || "";
+              continue;
+            }
+            if (/[\uac00-\ud7a3]/.test(line)) {
+              if (sawJournal || out.journalName) {
+                break;
+              }
+              out.journalName = line;
+              sawJournal = true;
+              continue;
+            }
+            break;
+          }
+        }
+      }
+    }
     const yearPart = parts.find((part) => parseYear(part));
     if (yearPart) {
       out.year = parseYear(yearPart);
