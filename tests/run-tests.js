@@ -1657,4 +1657,34 @@ test("title candidates prefer scoped selectors and meta over generic headings", 
   assert.equal(actual.titleMain, "제철유적의 조성에 관한 연구");
 });
 
+test("real DBpia page extracts full citation metadata", () => {
+  const html = fs.readFileSync(path.join(__dirname, "fixtures", "dbpia-real.html"), "utf8");
+  const m = metadata.parseFixtureHtml(html, "https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE08910892");
+
+  assert.equal(m.titleMain, "미주신경성 실신 증례보고 1례");
+  assert.deepEqual(m.authors, ["장재원", "노지애", "김현중", "홍정수", "배영춘", "김동진"]);
+  assert.equal(m.journalName, "대한한방내과학회지");
+  assert.equal(m.publisher, "대한한방내과학회");
+  assert.equal(m.year, "2017");
+  assert.equal(m.volume, "38");
+  assert.equal(m.issue, "2");
+  assert.equal(m.pageFirst, "240");
+  assert.equal(m.pageLast, "245");
+});
+
+test("real eArticle page extracts full citation metadata", () => {
+  const html = fs.readFileSync(path.join(__dirname, "fixtures", "earticle-real.html"), "utf8");
+  const m = metadata.parseFixtureHtml(html, "https://www.earticle.net/Article/A335000");
+
+  assert.equal(m.titleMain, "사물인터넷 기기 보안평가를 위한 기술요소 기반의 모델 설계 및 체크리스트 적용");
+  assert.deepEqual(m.authors, ["한슬기", "김명주"]);
+  assert.equal(m.journalName, "융합보안논문지");
+  assert.equal(m.publisher, "한국융합보안학회");
+  assert.equal(m.year, "2018");
+  assert.equal(m.volume, "18");
+  assert.equal(m.issue, "2");
+  assert.equal(m.pageFirst, "49");
+  assert.equal(m.pageLast, "58");
+});
+
 module.exports = Promise.all(pendingTests);
