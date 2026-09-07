@@ -823,6 +823,39 @@ function registerChromeListeners() {
             reason: "no-matching-metadata",
             downloadItem
           });
+          // 국가유산 보고서 파일명 정리(archreport)와의 협업: 우선순위가 여기 있어도
+          // 자국(archreport)이 컨텍스트를 갖고 있으면 그 파일명을 대신 지정한다.
+          // 이로써 두 확장의 설치 순서와 무관하게 올바른 파일명이 결정된다.
+          const ARCHREPORT_ID = "pmbgfboldeeaemikpcjnbkepldchodio";
+          const hasRuntime = typeof chrome !== "undefined" && chrome.runtime &&
+            typeof chrome.runtime.sendMessage === "function";
+          if (hasRuntime) {
+            try {
+              chrome.runtime.sendMessage(ARCHREPORT_ID, {
+                type: "arch-report-render-filename",
+                download: {
+                  id: downloadItem && downloadItem.id,
+                  url: downloadItem && downloadItem.url,
+                  finalUrl: downloadItem && downloadItem.finalUrl,
+                  referrer: downloadItem && downloadItem.referrer,
+                  tabUrl: downloadItem && downloadItem.tabUrl,
+                  filename: downloadItem && downloadItem.filename,
+                  tabId: downloadItem && downloadItem.tabId
+                }
+              }, (response) => {
+                const queryError = consumeLastError();
+                const filename = response && response.filename;
+                if (!queryError && filename) {
+                  safeSuggest({ filename, conflictAction: "uniquify" });
+                } else {
+                  safeSuggest();
+                }
+              });
+              return;
+            } catch (_error) {
+              // 외부 메시지 불가(미설치/차단) — 기존 동작으로 폴백
+            }
+          }
           safeSuggest();
           return;
         }
