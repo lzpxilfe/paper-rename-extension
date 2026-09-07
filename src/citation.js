@@ -87,6 +87,14 @@
     if (volume && issue) {
       return `${volume}(${issue})`;
     }
+    // KCI 데이터에 권 또는 호 중 하나만 있는 학술지는 호수 표기로 통일한다.
+    // 순수 숫자에만 적용한다(학술대회명 등 문자열 권호는 그대로 둔다).
+    if (/^\d+$/.test(volume) && !issue) {
+      return `제${volume}호`;
+    }
+    if (/^\d+$/.test(issue) && !volume) {
+      return `제${issue}호`;
+    }
     return volume || issue || "";
   }
 

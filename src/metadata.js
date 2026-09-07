@@ -126,6 +126,16 @@
     if (!issue && koreanIssue) {
       issue = koreanIssue[1];
     }
+    // KCI 검색 행 표기: "27()" = 권 27/호 없음, "(54)" = 호 54
+    if (!volume && !issue) {
+      const bareVolume = text.match(/^(\d+)\(\)$/);
+      const bareIssue = text.match(/^\((\d+)\)$/);
+      if (bareVolume) {
+        volume = bareVolume[1];
+      } else if (bareIssue) {
+        issue = bareIssue[1];
+      }
+    }
     return { volume, issue };
   }
 

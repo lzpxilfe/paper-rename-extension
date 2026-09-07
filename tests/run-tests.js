@@ -143,7 +143,7 @@ test("default filename matches requested KCI citation filename", () => {
     originalFilename: "download.pdf"
   }, filename.safeSettings(), { filename: "download.pdf" });
 
-  assert.equal(actual, "이차원, 2025, 「백제 한성기 몽촌토성의 성격과 기능」, 『백제학보』 53, 백제학회.pdf");
+  assert.equal(actual, "이차원, 2025, 「백제 한성기 몽촌토성의 성격과 기능」, 『백제학보』 제53호, 백제학회.pdf");
 });
 
 test("default filename matches requested RISS thesis filename", () => {
@@ -556,7 +556,7 @@ test("KCI metadata ignores UI tab labels in issue field", () => {
   const rendered = filename.renderFilename(actual, filename.safeSettings());
   assert.equal(
     rendered,
-    "조원진·조영광, 2026, 「인공지능(AI) 기반 역사학 연구와 역사교육의 연구 동향 및 과제」, 『고조선단군학』 59, 고조선단군학회.pdf"
+    "조원진·조영광, 2026, 「인공지능(AI) 기반 역사학 연구와 역사교육의 연구 동향 및 과제」, 『고조선단군학』 제59호, 고조선단군학회.pdf"
   );
 });
 
@@ -681,7 +681,7 @@ test("ScienceON ignores AI helper open-source modal labels as issue metadata", (
   const rendered = filename.renderFilename(actual, filename.safeSettings());
   assert.equal(
     rendered,
-    "\uc815\uacf5\uc8fc\u00b7\ubc15\uc8fc\uc11d, 2014, \u300c\uc2dc\uac01\uc608\uc220 \uc791\uac00 \uae30\ub85d\ubb3c \uc218\uc9d1\uc804\ub7b5 \ubc0f \uae30\ub85d\uc815\ubcf4 \uad00\ub9ac \uc5f0\uad6c\u300d, \u300e\uae30\ub85d\ud559\uc5f0\uad6c\u300f 40, \ud55c\uad6d\uae30\ub85d\ud559\ud68c.pdf"
+    "\uc815\uacf5\uc8fc\u00b7\ubc15\uc8fc\uc11d, 2014, \u300c\uc2dc\uac01\uc608\uc220 \uc791\uac00 \uae30\ub85d\ubb3c \uc218\uc9d1\uc804\ub7b5 \ubc0f \uae30\ub85d\uc815\ubcf4 \uad00\ub9ac \uc5f0\uad6c\u300d, \u300e\uae30\ub85d\ud559\uc5f0\uad6c\u300f \uc81c40\ud638, \ud55c\uad6d\uae30\ub85d\ud559\ud68c.pdf"
   );
 });
 
@@ -716,7 +716,7 @@ test("Seoul History archive research article metadata is parsed", () => {
 
   assert.equal(
     filename.renderFilename(actual, filename.safeSettings()),
-    "이지희, 2022, 「조선 전기 청기와의 제작과 유약 원료의 수급문제」, 『서울과 역사』 111, 서울역사편찬원.pdf"
+    "이지희, 2022, 「조선 전기 청기와의 제작과 유약 원료의 수급문제」, 『서울과 역사』 제111호, 서울역사편찬원.pdf"
   );
 });
 
