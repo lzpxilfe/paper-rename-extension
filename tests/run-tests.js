@@ -1687,4 +1687,18 @@ test("real eArticle page extracts full citation metadata", () => {
   assert.equal(m.pageLast, "58");
 });
 
+test("kci unified search row with merged number and badge line still finds the title", () => {
+  // 통합검색 결과는 행 번호("4.")와 배지("KCI 등재")가 한 줄로 렌더링된다.
+  const rowText = "4. KCI 등재\n충주 칠금동 제철유적의 조성과 운영 주체의 변천에 관한 고찰\n정태영 | 정락현 | 백제학회 | 백제학보 | (54) | pp.41~93 | 2025.11 | 한국고대사\nKCI 피인용 횟수 : 0\nKCI 원문";
+  const meta = metadata.parseResultText(rowText, "KCI", "https://www.kci.go.kr/kciportal/po/search/poTotalSearList.kci");
+
+  assert.equal(meta.titleMain, "충주 칠금동 제철유적의 조성과 운영 주체의 변천에 관한 고찰");
+  assert.deepEqual(meta.authors, ["정태영", "정락현"]);
+  assert.equal(meta.year, "2025");
+
+  const rowText2 = "2 . KCI 등재\n전북 동부지역 제철유적에 대한 접근법\n김상민 | 영남고고학회 | 영남고고학 | (93) | pp.29~52 | 2022.05 | 역사학";
+  const meta2 = metadata.parseResultText(rowText2, "KCI", "https://www.kci.go.kr/kciportal/po/search/poTotalSearList.kci");
+  assert.equal(meta2.titleMain, "전북 동부지역 제철유적에 대한 접근법");
+});
+
 module.exports = Promise.all(pendingTests);

@@ -1341,6 +1341,10 @@
       .map(cleanValue)
       // 검색 행에 붙는 배지/버튼 문구를 제거한다 ([PDF] 아이콘, kci 배지 등).
       .map((line) => line.replace(/^\[?\s*(?:PDF|HWP|원문|초록)\s*\]?\s*:?/i, "").trim())
+      // 통합검색 행은 행 번호("4.")와 배지("KCI 등재")가 한 줄로 들어온다.
+      // 줄 시작의 번호/배지를 벗겨낸 뒤 남은 내용으로 판단한다.
+      .map((line) => line.replace(/^\d{1,3}\s*\.\s*/, "").trim())
+      .map((line) => line.replace(/^(?:KCI\s*(?:등재|후보|엑셀런스)|SCIE|SSCI|AHCI)\s+/i, "").trim())
       .filter(Boolean)
       .filter((line) => !/^(KCI등재|무료|유료|기관 내 무료|원문보기|목차검색조회|음성듣기|\d+\.?|F|M|W)$/i.test(line))
       .filter((line) => !/^(kci\s*(?:등재|후보|엑셀런스)?|scielo|pdf|피인용\s*횟수?|인용하기|인용|초록|미리보기|다운로드|목차|원문|저자\s*정보|논문\s*정보|공유|출력|검색|상세\s*검색|통합\s*검색)$/i.test(line))
