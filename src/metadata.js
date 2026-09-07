@@ -1160,10 +1160,17 @@
     const selectors = (sourceTitleSelectors[source] || [])
       .concat(["meta[property='og:title']", "meta[name='title']", "title"]);
     const metaTitle = metaContent(doc, ["meta[property='og:title']", "meta[name='title']"]);
-    const candidates = selectors
-      .filter((selector) => !selector.startsWith("meta"))
+    // 일반 헤딩(h1~h3)은 사이트 UI 문구일 수 있으므로, 소스 전용 선택자와 메타 태그보다
+    // 우선하지 않게 뒤로 미룬다.
+    const headingSelectors = selectors.filter((selector) => /^h[1-3]$/.test(selector));
+    const scopedSelectors = selectors.filter((selector) =>
+      !selector.startsWith("meta") && !/^h[1-3]$/.test(selector)
+    );
+    const candidates = scopedSelectors
       .map((selector) => firstText(doc, [selector]))
-      .concat([metaTitle, cleanValue(doc && doc.title)])
+      .concat([metaTitle])
+      .concat(headingSelectors.map((selector) => firstText(doc, [selector])))
+      .concat([cleanValue(doc && doc.title)])
       .filter(Boolean);
     const title = candidates.find((candidate) => isUsableTitle(candidate)) || "";
     return splitTitle(title

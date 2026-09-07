@@ -1648,4 +1648,13 @@ test("year falls back to citation date before scanning body text", () => {
   assert.equal(actual.year, "2019");
 });
 
+test("title candidates prefer scoped selectors and meta over generic headings", () => {
+  const html = `<!doctype html><html><head>
+    <meta property="og:title" content="제철유적의 조성에 관한 연구">
+    <title>논문 검색</title></head>
+    <body><h1>논문 검색</h1><h2>간행물 정보</h2></body></html>`;
+  const actual = metadata.parseFixtureHtml(html, "https://www.dbpia.co.kr/journal/articleDetail?nodeId=NODE001");
+  assert.equal(actual.titleMain, "제철유적의 조성에 관한 연구");
+});
+
 module.exports = Promise.all(pendingTests);
