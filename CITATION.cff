@@ -5,6 +5,7 @@ title: "paper-rename-extension: 논문 다운로드 파일명"
 authors:
   - family-names: Hwang
     given-names: Jinseo
+license: GPL-2.0-only
 repository-code: "https://github.com/lzpxilfe/paper-rename-extension"
 url: "https://github.com/lzpxilfe/paper-rename-extension"
 date-released: 2026-07-10

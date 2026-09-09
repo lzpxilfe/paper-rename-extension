@@ -14,13 +14,22 @@
                        /원문보기|원문\s*보기|original\s*view/i.test(titleText);
   // 쿼리 파라미터(sessionId=, returnUrl=/login 등)까지 검사하면 논문 상세 페이지까지
   // 차단되므로 경로(pathname)만 본다.
-  const isLoginPage = /login|signin|oauth|authorize|register/i.test(location.pathname) || 
-                      /^(로그인|인증|login|signin)$/i.test(titleText) ||
-                      /(?:로그인\s*페이지|도서관\s*로그인|library\s*login)/i.test(titleText) ||
-                      // 비밀번호 입력창이 있어도 본문이 거의 없는(로그인 전용) 화면일 때만
-                      // 로그인 페이지로 본다. 논문 사이트는 헤더에 로그인 위젯을 두는 경우가 많다.
-                      (document.querySelector && document.querySelector('input[type="password"]') !== null &&
-                       document.body && (document.body.innerText || "").trim().length < 400);
+  // 지연 평가한다. 비밀번호 입력창 검사와 innerText 읽기는 강제 레이아웃을 유발하는데,
+  // 이 값은 실제로 서지 정보를 추출할 때만 필요하다.
+  let loginPageCache = null;
+  function isLoginPage() {
+    if (loginPageCache !== null) {
+      return loginPageCache;
+    }
+    loginPageCache = /login|signin|oauth|authorize|register/i.test(location.pathname) ||
+      /^(로그인|인증|login|signin)$/i.test(titleText) ||
+      /(?:로그인\s*페이지|도서관\s*로그인|library\s*login)/i.test(titleText) ||
+      // 비밀번호 입력창이 있어도 본문이 거의 없는(로그인 전용) 화면일 때만
+      // 로그인 페이지로 본다. 논문 사이트는 헤더에 로그인 위젯을 두는 경우가 많다.
+      (document.querySelector && document.querySelector('input[type="password"]') !== null &&
+       document.body && (document.body.innerText || "").trim().length < 400);
+    return loginPageCache;
+  }
   if (!constants || !metadataModule || !filenameModule) {
     return;
   }
@@ -504,13 +513,26 @@
     markRuntimeInvalidated(error);
   }
 
+  // 매니페스트가 https://*/* 를 매칭하는 이유는 전국 대학 도서관 프록시 도메인을
+  // 미리 열거할 수 없기 때문이지, 모든 사이트에서 동작해야 해서가 아니다.
+  // 학술 사이트(프록시 포함)가 아니면 상시 리스너와 초기 추출을 모두 건너뛴다.
+  //
+  // 팝업의 수동 조립기는 영향을 받지 않는다. popup.js는 비학술 페이지에서
+  // GET_PAGE_INFO 응답을 어차피 버리고 빈 폼으로 시작하므로(loadActiveTabMetadata),
+  // 여기서 미리 뽑아둔 메타데이터는 쓰이는 곳이 없다.
+  // 메시지 리스너는 위에서 이미 등록했으므로 팝업 통신도 그대로 동작한다.
+  const isAcademicPage = constants.isAcademicSite(location.href);
+  if (!isAcademicPage) {
+    return;
+  }
+
   document.addEventListener("pointerdown", handlePossibleDownload, true);
   document.addEventListener("click", handlePossibleDownload, true);
   document.addEventListener("change", handlePossibleDownload, true);
   document.addEventListener("keydown", handleKeyboard, true);
 
   function sendInitialContext() {
-    if (isLoginPage) {
+    if (isLoginPage()) {
       return;
     }
     const metadata = getCurrentMetadata();

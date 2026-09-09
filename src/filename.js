@@ -184,7 +184,42 @@
     return compact || (citation.renderFullCitation ? citation.renderFullCitation(meta, activeSettings) : "");
   }
 
-  function sanitizeFilenameBase(value, maxBaseLength) {
+  function byteLength(value) {
+    const text = String(value || "");
+    if (typeof TextEncoder === "function") {
+      return new TextEncoder().encode(text).length;
+    }
+    // Node 테스트 환경 폴백
+    if (typeof Buffer !== "undefined" && typeof Buffer.byteLength === "function") {
+      return Buffer.byteLength(text, "utf8");
+    }
+    return text.length;
+  }
+
+  // 코드포인트 단위로 잘라 서로게이트 페어(이모지 등)가 반쪽만 남지 않게 한다.
+  function truncateToByteLength(value, maxBytes) {
+    const text = String(value || "");
+    const limit = Math.max(0, Math.floor(Number(maxBytes) || 0));
+    if (limit <= 0) {
+      return "";
+    }
+    if (byteLength(text) <= limit) {
+      return text;
+    }
+    let output = "";
+    let used = 0;
+    for (const char of text) {
+      const size = byteLength(char);
+      if (used + size > limit) {
+        break;
+      }
+      output += char;
+      used += size;
+    }
+    return output;
+  }
+
+  function sanitizeFilenameBase(value, maxBaseLength, maxBaseBytes) {
     const cleaned = stripKnownExtension(value)
       .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
       .replace(/\s+([」』〉》≫])/g, "$1")
@@ -196,11 +231,23 @@
     if (!cleaned) {
       return "";
     }
+    // 문자 수 한도(사용자 설정, Windows에서 먼저 걸림)와
+    // UTF-8 바이트 한도(macOS/리눅스에서 먼저 걸림)를 함께 적용한다.
     const limit = Number(maxBaseLength) || 180;
-    return cleaned.slice(0, limit).replace(/[. ]+$/g, "").trim();
+    let sliced = cleaned.slice(0, limit);
+    const byteLimit = Number(maxBaseBytes);
+    if (Number.isFinite(byteLimit) && byteLimit > 0) {
+      sliced = truncateToByteLength(sliced, byteLimit);
+    }
+    return sliced.replace(/[. ]+$/g, "").trim();
   }
 
-  function renderFilename(meta, settings, downloadItem) {
+  // maxBytes는 파일명 한 조각의 UTF-8 바이트 상한이다.
+  // macOS(APFS)/리눅스(ext4 등)는 255바이트가 한도라 한글 제목이 쉽게 넘치지만,
+  // Windows(NTFS)는 255 UTF-16 단위라 문자 수 제한이 먼저 걸린다.
+  // 그래서 호출부(background)가 플랫폼을 보고 필요한 OS에서만 값을 넘긴다.
+  // 값이 없으면 문자 수 제한만 적용한다.
+  function renderFilename(meta, settings, downloadItem, options) {
     const activeSettings = safeSettings(settings);
     const source = meta || {};
     const originalFilename = source.originalFilename ||
@@ -213,10 +260,14 @@
       extensionFromFilename(downloadItem && (downloadItem.finalUrl || downloadItem.url)) ||
       ".pdf";
     const maxBaseLength = Math.max(1, activeSettings.maxFilenameLength - extension.length);
+    const byteBudget = Number(options && options.maxBytes);
+    const maxBaseBytes = Number.isFinite(byteBudget) && byteBudget > 0
+      ? Math.max(1, byteBudget - byteLength(extension))
+      : 0;
     // renderTemplate 내부에서 이미 빈 결과일 때 renderFullCitation 폴백을 수행하므로
     // 여기서 별도로 fallback 계산을 반복하지 않는다
     const rendered = renderTemplate(Object.assign({}, source, { originalFilename }), activeSettings);
-    const base = sanitizeFilenameBase(rendered || originalFilename || "paper", maxBaseLength);
+    const base = sanitizeFilenameBase(rendered || originalFilename || "paper", maxBaseLength, maxBaseBytes);
     return `${base || "paper"}${extension}`;
   }
 
@@ -232,7 +283,9 @@
     resolveSeparator,
     safeSettings,
     sanitizeFilenameBase,
-    stripKnownExtension
+    stripKnownExtension,
+    truncateToByteLength,
+    byteLength
   };
 
   if (typeof module !== "undefined" && module.exports) {

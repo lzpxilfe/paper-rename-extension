@@ -1712,4 +1712,251 @@ test("kci unified search row with merged number and badge line still finds the t
   assert.equal(meta2.titleMain, "전북 동부지역 제철유적에 대한 접근법");
 });
 
+// ── 파일명 바이트 길이 상한 (macOS/리눅스 255바이트 제한) ──
+
+test("truncateToByteLength cuts on code point boundaries", () => {
+  // 한글은 UTF-8 3바이트
+  assert.equal(filename.truncateToByteLength("가나다라", 9), "가나다");
+  assert.equal(filename.truncateToByteLength("가나다라", 11), "가나다");
+  assert.equal(filename.truncateToByteLength("가나다라", 12), "가나다라");
+  assert.equal(filename.truncateToByteLength("가나다라", 100), "가나다라");
+  assert.equal(filename.truncateToByteLength("abc", 2), "ab");
+  assert.equal(filename.truncateToByteLength("가", 0), "");
+});
+
+test("truncateToByteLength never splits a surrogate pair", () => {
+  // 🙂 는 UTF-8 4바이트 / UTF-16 서로게이트 페어
+  assert.equal(filename.truncateToByteLength("a🙂b", 4), "a");
+  assert.equal(filename.truncateToByteLength("a🙂b", 5), "a🙂");
+  // 반쪽 서로게이트가 남지 않아야 한다
+  const cut = filename.truncateToByteLength("가🙂나", 6);
+  assert.ok(!/[\uD800-\uDFFF]/.test(cut.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "")));
+});
+
+test("renderFilename applies the byte budget only when asked", () => {
+  const longMeta = Object.assign({}, fullMeta, {
+    titleMain: "가".repeat(120),
+    titleSub: ""
+  });
+  const settings = filename.safeSettings();
+
+  // 바이트 예산 없음 = Windows 경로: 문자 수 제한(180자)만 걸린다
+  const unlimited = filename.renderFilename(longMeta, settings, { filename: "a.pdf" });
+  assert.ok(filename.byteLength(unlimited) > 255,
+    "바이트 예산이 없으면 255바이트를 넘길 수 있어야 한다(기존 동작)");
+
+  // 바이트 예산 지정 = macOS/리눅스 경로
+  const capped = filename.renderFilename(longMeta, settings, { filename: "a.pdf" }, {
+    maxBytes: constants.MAX_FILENAME_BYTES
+  });
+  assert.ok(filename.byteLength(capped) <= constants.MAX_FILENAME_BYTES,
+    `상한 ${constants.MAX_FILENAME_BYTES}바이트를 넘지 않아야 한다 (실제 ${filename.byteLength(capped)})`);
+  assert.ok(capped.endsWith(".pdf"), "확장자는 잘리지 않아야 한다");
+});
+
+test("byte budget leaves room for the extension", () => {
+  const longMeta = Object.assign({}, fullMeta, { titleMain: "나".repeat(200), titleSub: "" });
+  const capped = filename.renderFilename(longMeta, filename.safeSettings(), { filename: "a.pdf" }, {
+    maxBytes: 60
+  });
+  assert.ok(filename.byteLength(capped) <= 60);
+  assert.ok(capped.endsWith(".pdf"));
+});
+
+// ── 포커스된 창 / 활성 탭 게이트 (창 간 오염 방지) ──
+
+test("low-confidence fallback rejects a context from a non-active tab", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  // 다른 창에 열어둔 논문 상세 페이지 (탭 7)
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1a0202e37d52c72d",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 7 }, frameId: 0 });
+
+  // tabId를 잃은 뷰어 다운로드. 포커스 정보가 없으면 기존대로 이 컨텍스트를 집는다.
+  const withoutFocus = background.chooseContextEntry({
+    tabId: -1,
+    url: "https://www.riss.kr/pdf/viewer/download.do",
+    filename: "download.pdf"
+  }, now + 1000);
+  assert.ok(withoutFocus, "포커스 정보가 없으면 기존 동작을 유지한다");
+
+  // 같은 상황에서 탭 7이 활성 탭이 아니면 폴백을 거부해야 한다
+  background._state.reset();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1a0202e37d52c72d",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 7 }, frameId: 0 });
+
+  const withFocus = background.chooseContextEntry({
+    tabId: -1,
+    url: "https://www.riss.kr/pdf/viewer/download.do",
+    filename: "download.pdf"
+  }, now + 1000, { activeTabIds: [9], focusedTabId: 9 });
+  assert.equal(withFocus, null, "다른 창의 컨텍스트는 저신뢰 폴백에서 제외한다");
+});
+
+test("focused tab wins over another active tab on equal evidence", () => {
+  background._state.reset();
+  const now = Date.now();
+
+  const otherMeta = Object.assign({}, fullMeta, { titleMain: "다른 창에 열어둔 논문" });
+  background.rememberContext({
+    metadata: otherMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=other",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 4 }, frameId: 0 });
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=focused",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 5 }, frameId: 0 });
+
+  const entry = background.chooseContextEntry({
+    tabId: -1,
+    url: "https://www.riss.kr/pdf/viewer/download.do",
+    filename: "download.pdf"
+  }, now + 1000, { activeTabIds: [4, 5], focusedTabId: 5 });
+
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain,
+    "지금 보고 있는 창의 논문이 선택돼야 한다");
+});
+
+test("same-tab match still wins regardless of focus info", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    downloadUrl: "https://example.test/article.pdf",
+    originalFilename: "article.pdf",
+    capturedAt: now
+  }, { tab: { id: 3 }, frameId: 0 });
+
+  const entry = background.chooseContextEntry({
+    tabId: 3,
+    url: "https://example.test/article.pdf",
+    filename: "article.pdf"
+  }, now + 50, { activeTabIds: [99], focusedTabId: 99 });
+
+  assert.ok(entry, "같은 탭에서 시작한 다운로드는 포커스와 무관하게 매칭된다");
+});
+
+// ── 닫힌 탭 컨텍스트 정리 ──
+
+test("forgetTabContexts drops only the closed tab's contexts", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta, downloadUrl: "", capturedAt: now
+  }, { tab: { id: 1 }, frameId: 0 });
+  background.rememberContext({
+    metadata: fullMeta, downloadUrl: "", capturedAt: now
+  }, { tab: { id: 2 }, frameId: 0 });
+  assert.equal(background._state.pendingContexts.length, 2);
+
+  background.forgetTabContexts(1);
+  assert.equal(background._state.pendingContexts.length, 1);
+  assert.equal(background._state.pendingContexts[0].tabId, 2);
+
+  background.forgetTabContexts(-1);
+  assert.equal(background._state.pendingContexts.length, 1, "잘못된 탭 ID는 무시한다");
+});
+
+// ── archreport 역방향 핸드셰이크 ──
+
+test("renderFilenameForPeer returns a paper filename for an academic download", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=peer",
+    downloadUrl: "https://www.riss.kr/pdf/download.do?id=peer",
+    originalFilename: "download.pdf",
+    capturedAt: now
+  }, { tab: { id: 12 }, frameId: 0 });
+
+  const rendered = background.renderFilenameForPeer({
+    tabId: 12,
+    url: "https://www.riss.kr/pdf/download.do?id=peer",
+    filename: "download.pdf"
+  });
+
+  assert.ok(rendered.includes(fullMeta.titleMain));
+  assert.ok(rendered.endsWith(".pdf"));
+});
+
+test("renderFilenameForPeer stands down on heritage and unknown downloads", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=peer",
+    downloadUrl: "https://www.riss.kr/pdf/download.do?id=peer",
+    capturedAt: now
+  }, { tab: { id: 12 }, frameId: 0 });
+
+  // 국가유산 도메인은 archreport 몫이다
+  assert.equal(background.renderFilenameForPeer({
+    tabId: 12,
+    url: "https://www.heritage.go.kr/file/report.pdf",
+    referrer: "https://www.heritage.go.kr/list.do",
+    filename: "report.pdf"
+  }), "");
+
+  // 학술 사이트와 무관한 다운로드에도 개입하지 않는다
+  assert.equal(background.renderFilenameForPeer({
+    tabId: 12,
+    url: "https://example.com/manual.pdf",
+    referrer: "https://example.com/",
+    filename: "manual.pdf"
+  }), "");
+
+  assert.equal(background.renderFilenameForPeer(null), "");
+});
+
+test("renderFilenameForPeer does not consume the context", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?p_mat_type=peer",
+    downloadUrl: "https://www.riss.kr/pdf/download.do?id=peer",
+    capturedAt: now
+  }, { tab: { id: 12 }, frameId: 0 });
+
+  const item = {
+    tabId: 12,
+    url: "https://www.riss.kr/pdf/download.do?id=peer",
+    filename: "download.pdf"
+  };
+  assert.ok(background.renderFilenameForPeer(item));
+  // 두 확장의 리스너는 같은 다운로드에 모두 호출되므로, 문의가 우리 리스너의
+  // 컨텍스트를 빼앗으면 안 된다.
+  assert.equal(background._state.pendingContexts.length, 1);
+  assert.ok(background.chooseContextEntry(item, now + 10));
+});
+
+// ── content script 상시 비용 가드가 기대는 도메인 판정 ──
+
+test("isAcademicSite keeps proxies in and everyday sites out", () => {
+  assert.ok(constants.isAcademicSite("https://www.riss.kr/search/detail/DetailView.do"));
+  assert.ok(constants.isAcademicSite("https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/article/detail/1"));
+  assert.ok(constants.isAcademicSite("https://www-dbpia-co-kr.eproxy.yonsei.ac.kr/journal/articleDetail?nodeId=1"));
+  assert.ok(constants.isAcademicSite("https://lib.example.ac.kr/login?url=https://www.riss.kr/index.do"));
+
+  assert.ok(!constants.isAcademicSite("https://www.naver.com/"));
+  assert.ok(!constants.isAcademicSite("https://mail.google.com/mail/u/0/"));
+  assert.ok(!constants.isAcademicSite("https://github.com/lzpxilfe/paper-rename-extension"));
+  assert.ok(!constants.isAcademicSite("https://example.com/docs/riss-guide.pdf"));
+});
+
 module.exports = Promise.all(pendingTests);
