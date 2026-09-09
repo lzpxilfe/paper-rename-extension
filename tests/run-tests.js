@@ -1959,4 +1959,341 @@ test("isAcademicSite keeps proxies in and everyday sites out", () => {
   assert.ok(!constants.isAcademicSite("https://example.com/docs/riss-guide.pdf"));
 });
 
+// ── BibTeX / RIS 파싱 (사이트가 제공하는 정규 서지) ──
+
+test("parseBibtex reads a Korean journal entry", () => {
+  const bib = [
+    "@article{kci2025,",
+    "  author = {김영희 and 박철수},",
+    "  title = {{근대 문학의 매체성과 독자: 잡지 문화를 중심으로}},",
+    "  journal = {한국문학연구},",
+    "  publisher = {한국문학회},",
+    "  volume = {42},",
+    "  number = {3},",
+    "  pages = {15--42},",
+    "  year = {2025},",
+    "  doi = {10.1234/abcd.2025}",
+    "}"
+  ].join("\n");
+  const meta = metadata.parseBibtex(bib);
+
+  assert.deepEqual(meta.authors, ["김영희", "박철수"]);
+  assert.equal(meta.titleMain, "근대 문학의 매체성과 독자");
+  assert.equal(meta.titleSub, "잡지 문화를 중심으로");
+  assert.equal(meta.journalName, "한국문학연구");
+  assert.equal(meta.publisher, "한국문학회");
+  assert.equal(meta.volume, "42");
+  assert.equal(meta.issue, "3");
+  assert.equal(meta.pageFirst, "15");
+  assert.equal(meta.pageLast, "42");
+  assert.equal(meta.year, "2025");
+  assert.equal(meta.doi, "10.1234/abcd.2025");
+});
+
+test("parseBibtex handles nested braces, quotes and thesis entries", () => {
+  const nested = '@article{x, title = {제목 {안쪽} 중괄호}, year = "2024", volume = 7}';
+  const meta = metadata.parseBibtex(nested);
+  assert.equal(meta.titleMain, "제목 안쪽 중괄호");
+  assert.equal(meta.year, "2024");
+  assert.equal(meta.volume, "7");
+
+  const thesis = "@phdthesis{y, author = {홍길동}, title = {학위논문}, school = {서울시립대학교}, year = {2026}}";
+  const thesisMeta = metadata.parseBibtex(thesis);
+  assert.equal(thesisMeta.thesisInstitution, "서울시립대학교");
+  assert.equal(thesisMeta.thesisDegree, "박사");
+  assert.equal(thesisMeta.publisher, "서울시립대학교");
+});
+
+test("parseBibtex flips western name order but leaves Korean names alone", () => {
+  const western = metadata.parseBibtex("@article{x, author = {Smith, Jane and Doe, John}}");
+  assert.deepEqual(western.authors, ["Jane Smith", "John Doe"]);
+
+  const korean = metadata.parseBibtex("@article{x, author = {김영희 and 박철수}}");
+  assert.deepEqual(korean.authors, ["김영희", "박철수"]);
+});
+
+test("parseRis reads a journal record", () => {
+  const ris = [
+    "TY  - JOUR", "AU  - 김영희", "AU  - 박철수",
+    "TI  - 근대 문학의 매체성과 독자", "T2  - 한국문학연구",
+    "PB  - 한국문학회", "VL  - 42", "IS  - 3",
+    "SP  - 15", "EP  - 42", "PY  - 2025",
+    "DO  - https://doi.org/10.1234/abcd", "ER  - "
+  ].join("\n");
+  const meta = metadata.parseRis(ris);
+
+  assert.deepEqual(meta.authors, ["김영희", "박철수"]);
+  assert.equal(meta.titleMain, "근대 문학의 매체성과 독자");
+  assert.equal(meta.journalName, "한국문학연구");
+  assert.equal(meta.volume, "42");
+  assert.equal(meta.pageLast, "42");
+  assert.equal(meta.year, "2025");
+  assert.equal(meta.doi, "10.1234/abcd");
+});
+
+test("parseCitationExport ignores text that is neither BibTeX nor RIS", () => {
+  assert.deepEqual(metadata.parseCitationExport("그냥 본문입니다"), {});
+  assert.deepEqual(metadata.parseCitationExport(""), {});
+  assert.ok(metadata.parseCitationExport("@article{x, year = {2020}}").year === "2020");
+});
+
+test("citation export block in page HTML wins over weaker heuristics", () => {
+  // KCI 상세 페이지가 BibTeX 블록을 함께 담고 있는 형태
+  const html = [
+    "<html><head><title>KCI 논문 상세</title></head><body>",
+    "<h3>사이트 안내 문구</h3>",
+    "<textarea id='BibTex'>@article{kci,",
+    "author = {정태영 and 정락현},",
+    "title = {충주 칠금동 제철유적의 조성},",
+    "journal = {백제학보},",
+    "number = {54},",
+    "pages = {41--93},",
+    "year = {2025}}</textarea>",
+    "</body></html>"
+  ].join("\n");
+
+  const found = metadata.findCitationExportTextInHtml(html);
+  assert.ok(found.includes("@article"));
+
+  const meta = metadata.parseFixtureHtml(html, "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART001");
+  assert.equal(meta.titleMain, "충주 칠금동 제철유적의 조성");
+  assert.deepEqual(meta.authors, ["정태영", "정락현"]);
+  assert.equal(meta.journalName, "백제학보");
+  assert.equal(meta.issue, "54");
+  assert.equal(meta.year, "2025");
+});
+
+// ── DOI ──
+
+test("normalizeDoi accepts the common shapes and trims trailing punctuation", () => {
+  assert.equal(metadata.normalizeDoi("https://doi.org/10.1234/abcd"), "10.1234/abcd");
+  assert.equal(metadata.normalizeDoi("doi:10.1234/abcd.2025"), "10.1234/abcd.2025");
+  assert.equal(metadata.normalizeDoi("10.1234/abcd,"), "10.1234/abcd");
+  assert.equal(metadata.normalizeDoi("DOI 없음"), "");
+  assert.equal(metadata.normalizeDoi(""), "");
+});
+
+test("findDoiInHtml prefers the citation_doi meta tag", () => {
+  const html = "<html><head><meta name='citation_doi' content='10.5555/meta.1'></head>" +
+    "<body><a href='https://doi.org/10.9999/body.2'>링크</a></body></html>";
+  assert.equal(metadata.findDoiInHtml(html), "10.5555/meta.1");
+
+  const onlyLink = "<html><body><a href='https://doi.org/10.9999/body.2'>링크</a></body></html>";
+  assert.equal(metadata.findDoiInHtml(onlyLink), "10.9999/body.2");
+});
+
+// ── Crossref ──
+
+test("parseCrossrefWork maps a work payload", () => {
+  const payload = {
+    message: {
+      title: ["A Study of Something: A Subtitle"],
+      author: [{ given: "Jane", family: "Smith" }, { given: "길동", family: "홍" }],
+      "container-title": ["Journal of Testing"],
+      publisher: "Test Society",
+      volume: "12",
+      issue: "4",
+      page: "100-120",
+      issued: { "date-parts": [[2023, 5, 1]] },
+      DOI: "10.1234/xyz"
+    }
+  };
+  const meta = metadata.parseCrossrefWork(payload);
+  assert.equal(meta.titleMain, "A Study of Something");
+  assert.equal(meta.titleSub, "A Subtitle");
+  assert.deepEqual(meta.authors, ["Jane Smith", "홍길동"]);
+  assert.equal(meta.journalName, "Journal of Testing");
+  assert.equal(meta.volume, "12");
+  assert.equal(meta.pageFirst, "100");
+  assert.equal(meta.pageLast, "120");
+  assert.equal(meta.year, "2023");
+  assert.equal(meta.doi, "10.1234/xyz");
+
+  assert.deepEqual(metadata.parseCrossrefWork(null), {});
+  assert.deepEqual(metadata.parseCrossrefWork({}), {});
+});
+
+test("crossref only fills blanks and never overwrites site values", () => {
+  // 국내 논문은 Crossref에 영문 제목만 있는 경우가 많아, 사이트가 준
+  // 한글 값을 덮으면 오히려 나빠진다.
+  const meta = {
+    authors: ["김영희"],
+    titleMain: "근대 문학의 매체성",
+    journalName: "한국문학연구",
+    volume: "",
+    year: ""
+  };
+  const changed = background.mergeCrossrefIntoMetadata(meta, {
+    authors: ["Younghee Kim"],
+    titleMain: "Mediality of Modern Literature",
+    journalName: "Korean Literature Studies",
+    volume: "42",
+    year: "2025"
+  });
+
+  assert.ok(changed);
+  assert.deepEqual(meta.authors, ["김영희"], "저자는 유지");
+  assert.equal(meta.titleMain, "근대 문학의 매체성", "한글 제목은 유지");
+  assert.equal(meta.journalName, "한국문학연구", "한글 학술지명은 유지");
+  assert.equal(meta.volume, "42", "빈 칸은 채운다");
+  assert.equal(meta.year, "2025", "빈 칸은 채운다");
+});
+
+test("crossref lookup is skipped without a doi or when nothing is missing", () => {
+  assert.equal(background.contextNeedsCrossref({ doi: "", journalName: "" }), false);
+  assert.equal(background.contextNeedsCrossref(null), false);
+  assert.equal(background.contextNeedsCrossref({
+    doi: "10.1/x",
+    authors: ["김영희"],
+    journalName: "학술지",
+    year: "2025",
+    volume: "1",
+    pageFirst: "1"
+  }), false, "빠진 칸이 없으면 조회하지 않는다");
+  assert.equal(background.contextNeedsCrossref({ doi: "10.1/x", journalName: "" }), true);
+});
+
+// ── 하위 폴더 저장 ──
+
+test("download folder prefixes the filename and resolves {year}", () => {
+  const meta = { authors: ["김영희"], titleMain: "제목", year: "2025", journalName: "학술지" };
+  const withFolder = (downloadFolder, overrides) => filename.renderFilename(
+    Object.assign({}, meta, overrides),
+    filename.safeSettings({ downloadFolder }),
+    { filename: "a.pdf" }
+  );
+
+  assert.ok(!withFolder("").includes("/"), "빈 설정이면 폴더를 붙이지 않는다");
+  assert.ok(withFolder("논문").startsWith("논문/"));
+  assert.ok(withFolder("논문/{year}").startsWith("논문/2025/"));
+  // 연도를 모르면 그 조각만 빠진다
+  assert.ok(withFolder("논문/{year}", { year: "" }).startsWith("논문/"));
+  assert.ok(!withFolder("논문/{year}", { year: "" }).startsWith("논문//"));
+});
+
+test("download folder cannot escape the downloads directory", () => {
+  const meta = { authors: ["김영희"], titleMain: "제목", year: "2025" };
+  const folderOf = (downloadFolder) => {
+    const rendered = filename.renderFilename(meta, filename.safeSettings({ downloadFolder }), { filename: "a.pdf" });
+    return rendered.slice(0, rendered.lastIndexOf("/") + 1);
+  };
+
+  assert.equal(folderOf("../../etc"), "etc/", "상위 디렉터리 조각은 버린다");
+  assert.equal(folderOf("/tmp/x"), "tmp/x/", "절대경로는 상대경로가 된다");
+  assert.equal(folderOf(".."), "", "..만 있으면 폴더 없음");
+  assert.equal(folderOf("   "), "", "공백만 있으면 폴더 없음");
+  assert.equal(filename.sanitizeFolderSegment('논문:정리*'), "논문 정리");
+  assert.equal(filename.sanitizeFolderSegment(".."), "");
+  assert.equal(filename.sanitizeFolderSegment("."), "");
+});
+
+test("byte budget applies to the filename, not the folder path", () => {
+  // OS 길이 제한은 경로 전체가 아니라 조각마다 걸린다.
+  const meta = { authors: ["김"], titleMain: "가".repeat(200), year: "2025" };
+  const rendered = filename.renderFilename(
+    meta,
+    filename.safeSettings({ downloadFolder: "논문/{year}" }),
+    { filename: "a.pdf" },
+    { maxBytes: constants.MAX_FILENAME_BYTES }
+  );
+  const base = rendered.slice(rendered.lastIndexOf("/") + 1);
+
+  assert.ok(rendered.startsWith("논문/2025/"));
+  assert.ok(filename.byteLength(base) <= constants.MAX_FILENAME_BYTES,
+    `파일명 조각은 상한 이하여야 한다 (실제 ${filename.byteLength(base)})`);
+});
+
+// ── 서지 내보내기 생성 ──
+
+test("renderBibtex and renderRis round-trip through the parsers", () => {
+  const meta = {
+    authors: ["김영희", "박철수"],
+    titleMain: "근대 문학의 매체성과 독자",
+    titleSub: "잡지 문화를 중심으로",
+    journalName: "한국문학연구",
+    publisher: "한국문학회",
+    volume: "42",
+    issue: "3",
+    pageFirst: "15",
+    pageLast: "42",
+    year: "2025",
+    doi: "10.1234/abcd"
+  };
+
+  const fromBibtex = metadata.parseBibtex(metadata.renderBibtex(meta));
+  assert.deepEqual(fromBibtex.authors, meta.authors);
+  assert.equal(fromBibtex.titleMain, meta.titleMain);
+  assert.equal(fromBibtex.titleSub, meta.titleSub);
+  assert.equal(fromBibtex.journalName, meta.journalName);
+  assert.equal(fromBibtex.volume, meta.volume);
+  assert.equal(fromBibtex.issue, meta.issue);
+  assert.equal(fromBibtex.pageFirst, meta.pageFirst);
+  assert.equal(fromBibtex.pageLast, meta.pageLast);
+  assert.equal(fromBibtex.year, meta.year);
+  assert.equal(fromBibtex.doi, meta.doi);
+
+  const fromRis = metadata.parseRis(metadata.renderRis(meta));
+  assert.deepEqual(fromRis.authors, meta.authors);
+  assert.equal(fromRis.titleMain, meta.titleMain);
+  assert.equal(fromRis.journalName, meta.journalName);
+  assert.equal(fromRis.pageLast, meta.pageLast);
+  assert.equal(fromRis.year, meta.year);
+});
+
+test("bibtex citation keys stay distinct for Korean authors", () => {
+  const keyOf = (meta) => metadata.renderBibtex(meta).split("\n")[0];
+  const first = keyOf({ authors: ["김영희"], titleMain: "근대 문학의 매체성", year: "2025" });
+  const second = keyOf({ authors: ["박철수"], titleMain: "조선 후기 회화", year: "2025" });
+
+  assert.notEqual(first, second, "한글 저자끼리 키가 충돌하면 .bib 라이브러리가 망가진다");
+  assert.ok(first.includes("김영희2025"));
+  assert.ok(keyOf({ authors: ["Jane Smith"], titleMain: "Deep Learning", year: "2024" }).includes("janesmith2024"));
+});
+
+test("thesis metadata exports as a thesis entry", () => {
+  const thesis = {
+    authors: ["홍길동"],
+    titleMain: "학위논문 제목",
+    thesisInstitution: "서울시립대학교",
+    thesisDegree: "석사",
+    year: "2026"
+  };
+  const bib = metadata.renderBibtex(thesis);
+  assert.ok(bib.startsWith("@mastersthesis{"));
+  assert.ok(bib.includes("school = {서울시립대학교}"));
+  assert.ok(!bib.includes("journal ="));
+
+  assert.ok(metadata.renderRis(thesis).includes("TY  - THES"));
+  assert.ok(metadata.renderBibtex(Object.assign({}, thesis, { thesisDegree: "박사" })).startsWith("@phdthesis{"));
+});
+
+test("crossref does not re-query the same doi in a short window", () => {
+  const now = Date.now();
+  const doi = `10.1234/guard-${now}`;
+  assert.equal(background.shouldQueryCrossref(doi, now), true, "첫 조회는 허용");
+  assert.equal(background.shouldQueryCrossref(doi, now + 1000), false, "곧바로 재조회하지 않는다");
+  assert.equal(background.shouldQueryCrossref(doi, now + 11 * 60 * 1000), true, "시간이 지나면 다시 조회");
+});
+
+test("our own .bib/.ris exports are never renamed", () => {
+  // 팝업 내보내기가 시작한 다운로드에 논문 파일명을 다시 씌우면 확장자가 어긋난다.
+  global.chrome = { runtime: { id: "self-extension-id" } };
+  try {
+    assert.equal(background.isPotentialPaperDownload({
+      url: "blob:chrome-extension://self-extension-id/abc",
+      referrer: "https://www.riss.kr/search/detail/DetailView.do",
+      filename: "김영희, 2025, 제목.bib",
+      byExtensionId: "self-extension-id"
+    }), false);
+
+    // 다른 출처의 학술 다운로드는 그대로 처리한다
+    assert.equal(background.isPotentialPaperDownload({
+      url: "https://www.riss.kr/pdf/download.do",
+      filename: "download.pdf"
+    }), true);
+  } finally {
+    delete global.chrome;
+  }
+});
+
 module.exports = Promise.all(pendingTests);

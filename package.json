@@ -1,6 +1,6 @@
 {
   "name": "paper-rename-extension",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Chrome MV3 extension that renames Korean academic paper PDF downloads into citation-like filenames.",
   "license": "GPL-2.0-only",

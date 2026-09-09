@@ -37,7 +37,13 @@
     titleBracketMode: "single",
     journalBracketMode: "double",
     thesisDeptMode: "none",
-    thesisTitleBracketMode: "double"
+    thesisTitleBracketMode: "double",
+    // DOI로 Crossref에 서지를 물어볼지 여부. 어떤 논문을 보는지가 제3자
+    // (Crossref)에 전달되므로 기본값은 꺼짐이고, 팝업에서 켤 수 있다.
+    useCrossref: false,
+    // 다운로드를 저장할 하위 폴더. 빈 값이면 다운로드 폴더 최상위에 저장한다.
+    // {year} 자리표시자를 쓸 수 있다. 예: "논문/{year}"
+    downloadFolder: ""
   };
 
   const ACTION = {
@@ -68,6 +74,11 @@
   // 문자 수 제한이 먼저 걸리므로, 두 기준을 함께 적용해야 3개 OS 모두 안전하다.
   // 235는 Chrome이 중복 시 붙이는 " (12)" 접미사 여유를 남긴 값이다.
   const MAX_FILENAME_BYTES = 235;
+
+  // Crossref 공개 API. 요청은 DOI 하나만 담으며 사용자 식별 정보를 보내지 않는다.
+  const CROSSREF_API_BASE = "https://api.crossref.org/works/";
+  // 서지 보강이 다운로드를 붙잡지 않도록 하는 상한.
+  const CROSSREF_FETCH_TIMEOUT_MS = 3000;
 
   const ACADEMIC_DOMAINS_PATTERN = /riss\.kr|dbpia|kiss\.kstudy|kci\.go\.kr|earticle\.net|scholar.*kyobobook|kyobobook.*scholar|koreascience|scienceon|krm\.or\.kr|nanet\.go\.kr|nl\.go\.kr|scholar\.google|dcollection|history\.seoul\.go\.kr/i;
 
@@ -153,6 +164,8 @@
     MAX_FILENAME_LENGTH_MIN,
     MAX_FILENAME_LENGTH_MAX,
     MAX_FILENAME_BYTES,
+    CROSSREF_API_BASE,
+    CROSSREF_FETCH_TIMEOUT_MS,
     MESSAGES,
     DOWNLOAD_DIAGNOSTICS_STORAGE_KEY,
     SETTINGS_STORAGE_KEY,

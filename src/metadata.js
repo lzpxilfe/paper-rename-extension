@@ -84,6 +84,8 @@
   function parsePages(value) {
     const text = normalizeSpaces(value)
       .replace(/[–—~〜]/g, "-")
+      // BibTeX는 쪽 범위를 "15--42"로 쓴다. 연속 하이픈을 하나로 모은다.
+      .replace(/-{2,}/g, "-")
       .replace(/쪽/g, "")
       .replace(/pp?\./ig, "");
     const range = text.match(/(\d+)\s*-\s*(\d+)/);
@@ -1079,7 +1081,8 @@
       pageUrl: pageUrl || "",
       thesisInstitution: "",
       thesisDept: "",
-      thesisDegree: ""
+      thesisDegree: "",
+      doi: ""
     };
   }
 
@@ -1550,6 +1553,13 @@
     if (source === SOURCES.DCOLLECTION) {
       meta = mergePreferExtra(meta, parseDcollectionDom(doc));
     }
+    // 사이트가 "인용하기/내보내기"로 제공하는 BibTeX·RIS 블록이 페이지에 있으면
+    // 가장 신뢰한다. 사이트가 스스로 만든 정규 서지 데이터라 마크업이 바뀌어도
+    // 잘 깨지지 않는다. 값이 있는 필드만 덮으므로 빈 값으로 지워지지 않는다.
+    meta = mergePreferExtra(meta, parseCitationExport(findCitationExportText(doc)));
+    if (!meta.doi) {
+      meta.doi = findDoi(doc);
+    }
     // citation_* 메타 태그를 제공하는 사이트(KCI, KoreaScience, eArticle 등)는
     // 휴리스틱이 비운 칸만 출판사 제공 값으로 메운다. 덮어쓰지 않는다.
     const citationMeta = parseGoogleScholarMetaTags(doc);
@@ -1788,6 +1798,10 @@
     if (source === SOURCES.DCOLLECTION) {
       meta = mergePreferExtra(meta, parseDcollectionHtml(html));
     }
+    meta = mergePreferExtra(meta, parseCitationExport(findCitationExportTextInHtml(html)));
+    if (!meta.doi) {
+      meta.doi = findDoiInHtml(html);
+    }
     if (!meta.titleMain) {
       const htmlTitle = titleFromHtml(html);
       if (isUsableTitle(htmlTitle)) {
@@ -1800,9 +1814,540 @@
     return normalizeMetadata(meta);
   }
 
+
+  // ── 서지 내보내기 형식(BibTeX / RIS) 파싱 ──
+  //
+  // 학술 DB 대부분은 "인용하기 / 내보내기"에 BibTeX·RIS를 제공한다. 사이트가
+  // 스스로 만들어 주는 정규 서지 데이터라, 마크업이 바뀌어도 잘 깨지지 않는다.
+  // 전용 셀렉터보다 이쪽을 우선 신뢰한다.
+
+  // 알려진 엔트리 타입만 받는다. @[A-Za-z]+ 로 열어두면 페이지의 <style> 안에 있는
+  // @media / @import / @font-face 블록까지 BibTeX로 오인해, 진짜 서지 블록을 놓친다.
+  const BIBTEX_TYPES = [
+    "article", "inproceedings", "incollection", "inbook", "book", "booklet",
+    "phdthesis", "mastersthesis", "thesis", "techreport", "report",
+    "misc", "proceedings", "conference", "unpublished", "manual", "online"
+  ].join("|");
+  const BIBTEX_ENTRY_PATTERN = new RegExp(`@(?:${BIBTEX_TYPES})\\s*\\{`, "i");
+  const RIS_ENTRY_PATTERN = /(^|\n)\s*TY\s{2}-\s*\w/;
+
+  // LaTeX 흔적을 걷어낸다. 국내 DB의 BibTeX는 한글을 그대로 담지만,
+  // 중괄호 보호({제목})와 이스케이프(\&, \_)는 흔하다.
+  function stripLatex(value) {
+    return String(value || "")
+      .replace(/\\[a-zA-Z]+\s*/g, " ")
+      .replace(/\\(.)/g, "$1")
+      .replace(/[{}]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  // BibTeX 값은 중첩 중괄호를 담을 수 있어 정규식 하나로는 못 자른다.
+  // field = { ... } / field = "..." / field = 123 을 모두 훑는다.
+  function parseBibtexFields(text) {
+    const source = String(text || "");
+    const start = source.search(BIBTEX_ENTRY_PATTERN);
+    if (start < 0) {
+      return {};
+    }
+    const fields = {};
+    let index = source.indexOf("{", start) + 1;
+    // 엔트리 타입(@article, @phdthesis 등)도 학위논문 판별에 쓴다
+    const typeMatch = source.slice(start).match(/@([A-Za-z]+)/);
+    if (typeMatch) {
+      fields._type = typeMatch[1].toLowerCase();
+    }
+    while (index < source.length) {
+      const keyMatch = /([A-Za-z][A-Za-z0-9_-]*)\s*=\s*/.exec(source.slice(index));
+      if (!keyMatch) {
+        break;
+      }
+      const key = keyMatch[1].toLowerCase();
+      let cursor = index + keyMatch.index + keyMatch[0].length;
+      let value = "";
+      const opener = source[cursor];
+      if (opener === "{") {
+        let depth = 0;
+        let end = cursor;
+        while (end < source.length) {
+          if (source[end] === "{") depth += 1;
+          else if (source[end] === "}") {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+          end += 1;
+        }
+        value = source.slice(cursor + 1, end);
+        cursor = end + 1;
+      } else if (opener === '"') {
+        const end = source.indexOf('"', cursor + 1);
+        value = end < 0 ? source.slice(cursor + 1) : source.slice(cursor + 1, end);
+        cursor = end < 0 ? source.length : end + 1;
+      } else {
+        const end = source.slice(cursor).search(/[,}\n]/);
+        value = end < 0 ? source.slice(cursor) : source.slice(cursor, cursor + end);
+        cursor += end < 0 ? value.length : end;
+      }
+      if (!fields[key]) {
+        fields[key] = stripLatex(value);
+      }
+      index = cursor;
+      // 엔트리 끝
+      if (source[index] === "}" && !/[A-Za-z]\s*=/.test(source.slice(index, index + 40))) {
+        break;
+      }
+    }
+    return fields;
+  }
+
+  function bibtexAuthors(value) {
+    const raw = String(value || "");
+    if (!raw) {
+      return [];
+    }
+    // BibTeX 저자 구분자는 " and ". 각 저자는 "성, 이름" 또는 "이름 성".
+    return raw
+      .split(/\s+and\s+/i)
+      .map((name) => {
+        const parts = String(name).split(",");
+        // 한국어 이름은 "홍길동" 한 덩어리라 그대로 둔다.
+        // 영문 "Hong, Gil-dong"만 뒤집어 자연 표기로 만든다.
+        if (parts.length === 2 && /[A-Za-z]/.test(name) && !/[가-힣]/.test(name)) {
+          return `${parts[1].trim()} ${parts[0].trim()}`.trim();
+        }
+        return parts[0].trim();
+      })
+      .map(cleanValue)
+      .filter(Boolean);
+  }
+
+  function parseBibtex(text) {
+    const fields = parseBibtexFields(text);
+    if (!fields || !Object.keys(fields).length) {
+      return {};
+    }
+    const out = {};
+    const authors = bibtexAuthors(fields.author);
+    if (authors.length) {
+      out.authors = authors;
+    }
+    if (fields.title) {
+      Object.assign(out, splitTitle(cleanValue(fields.title)));
+    }
+    const journal = fields.journal || fields.booktitle || fields.series;
+    if (journal) {
+      out.journalName = cleanValue(journal);
+    }
+    // 학위논문은 school/institution이 발행기관이다.
+    const publisher = fields.publisher || fields.school || fields.institution;
+    if (publisher) {
+      out.publisher = cleanValue(publisher);
+    }
+    if (fields.volume) {
+      out.volume = cleanValue(fields.volume);
+    }
+    if (fields.number || fields.issue) {
+      out.issue = cleanValue(fields.number || fields.issue);
+    }
+    if (fields.year) {
+      out.year = parseYear(fields.year);
+    }
+    if (fields.pages) {
+      Object.assign(out, parsePages(fields.pages));
+    }
+    if (fields.doi) {
+      out.doi = normalizeDoi(fields.doi);
+    }
+    if (fields.school || fields._type === "phdthesis" || fields._type === "mastersthesis") {
+      out.thesisInstitution = cleanValue(fields.school || fields.institution || "");
+      if (fields._type === "phdthesis") {
+        out.thesisDegree = "박사";
+      } else if (fields._type === "mastersthesis") {
+        out.thesisDegree = "석사";
+      }
+    }
+    return out;
+  }
+
+  function parseRis(text) {
+    const source = String(text || "");
+    if (!RIS_ENTRY_PATTERN.test(source)) {
+      return {};
+    }
+    const tags = {};
+    const authors = [];
+    source.split(/\r?\n/).forEach((line) => {
+      const match = /^\s*([A-Z][A-Z0-9])\s{2}-\s?(.*)$/.exec(line);
+      if (!match) {
+        return;
+      }
+      const tag = match[1];
+      const value = cleanValue(match[2]);
+      if (!value) {
+        return;
+      }
+      if (tag === "AU" || tag === "A1") {
+        // RIS 저자도 "성, 이름" 표기를 쓴다.
+        const parts = value.split(",");
+        authors.push(parts.length === 2 && /[A-Za-z]/.test(value) && !/[가-힣]/.test(value)
+          ? `${parts[1].trim()} ${parts[0].trim()}`.trim()
+          : parts[0].trim());
+        return;
+      }
+      if (!tags[tag]) {
+        tags[tag] = value;
+      }
+    });
+    if (!Object.keys(tags).length && !authors.length) {
+      return {};
+    }
+    const out = {};
+    if (authors.length) {
+      out.authors = authors.map(cleanValue).filter(Boolean);
+    }
+    const title = tags.TI || tags.T1;
+    if (title) {
+      Object.assign(out, splitTitle(title));
+    }
+    const journal = tags.T2 || tags.JO || tags.JF || tags.J2;
+    if (journal) {
+      out.journalName = journal;
+    }
+    if (tags.PB) {
+      out.publisher = tags.PB;
+    }
+    if (tags.VL) {
+      out.volume = tags.VL;
+    }
+    if (tags.IS) {
+      out.issue = tags.IS;
+    }
+    if (tags.SP) {
+      out.pageFirst = String(tags.SP).replace(/\D/g, "") || "";
+    }
+    if (tags.EP) {
+      out.pageLast = String(tags.EP).replace(/\D/g, "") || "";
+    }
+    const year = tags.PY || tags.Y1 || tags.DA;
+    if (year) {
+      out.year = parseYear(year);
+    }
+    if (tags.DO) {
+      out.doi = normalizeDoi(tags.DO);
+    }
+    return out;
+  }
+
+  function parseCitationExport(text) {
+    const source = String(text || "");
+    if (BIBTEX_ENTRY_PATTERN.test(source)) {
+      return parseBibtex(source);
+    }
+    if (RIS_ENTRY_PATTERN.test(source)) {
+      return parseRis(source);
+    }
+    return {};
+  }
+
+  // 페이지 안에 놓인 BibTeX/RIS 블록을 찾는다. 사이트가 "인용하기" 패널에
+  // 숨겨 두는 경우가 많아, 눈에 보이지 않아도 DOM에는 있다.
+  const CITATION_EXPORT_SELECTORS = [
+    "#BibTex", "#bibtex", "#Bibtex", ".bibtex", "[id*='ibTex']", "[id*='ibtex']",
+    "#RIS", "#ris", ".ris", "[id*='endnote']", "[id*='EndNote']",
+    "textarea", "pre"
+  ];
+
+  function findCitationExportText(doc) {
+    if (!doc || typeof doc.querySelectorAll !== "function") {
+      return "";
+    }
+    let scanned = 0;
+    for (const selector of CITATION_EXPORT_SELECTORS) {
+      let nodes;
+      try {
+        nodes = doc.querySelectorAll(selector);
+      } catch (_error) {
+        continue;
+      }
+      for (const node of Array.from(nodes || [])) {
+        // 페이지 전체를 훑지 않도록 상한을 둔다.
+        if (scanned > 40) {
+          return "";
+        }
+        scanned += 1;
+        const text = String((node && (node.value || node.textContent)) || "");
+        if (text.length > 20000) {
+          continue;
+        }
+        if (BIBTEX_ENTRY_PATTERN.test(text) || RIS_ENTRY_PATTERN.test(text)) {
+          return text;
+        }
+      }
+    }
+    return "";
+  }
+
+  // 중첩 중괄호가 있어 정규식으로는 엔트리 끝을 못 찾는다. 여는 중괄호부터
+  // 깊이를 세어 짝이 맞는 지점까지 잘라낸다.
+  function sliceBibtexEntry(source, start) {
+    const open = source.indexOf("{", start);
+    if (open < 0) {
+      return "";
+    }
+    let depth = 0;
+    const limit = Math.min(source.length, open + 8000);
+    for (let index = open; index < limit; index += 1) {
+      const char = source[index];
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          return source.slice(start, index + 1);
+        }
+      }
+    }
+    return "";
+  }
+
+  function findCitationExportTextInHtml(html) {
+    const source = String(html || "");
+    const bibStart = source.search(BIBTEX_ENTRY_PATTERN);
+    if (bibStart >= 0) {
+      const entry = sliceBibtexEntry(source, bibStart);
+      if (entry) {
+        return decodeHtml(entry);
+      }
+    }
+    const ris = source.match(/TY\s{2}-\s*\w[\s\S]{0,4000}?ER\s{2}-/);
+    if (ris) {
+      return decodeHtml(ris[0]);
+    }
+    return "";
+  }
+
+  // ── DOI ──
+
+  function normalizeDoi(value) {
+    const text = String(value || "").trim();
+    // https://doi.org/10.xxxx/yyy, doi:10.xxxx/yyy, 10.xxxx/yyy 모두 받는다.
+    const match = text.match(/\b(10\.\d{4,9}\/[^\s"'<>]+)/i);
+    if (!match) {
+      return "";
+    }
+    return match[1].replace(/[.,;)\]]+$/, "");
+  }
+
+  function findDoi(doc) {
+    if (!doc) {
+      return "";
+    }
+    const fromMeta = metaContent(doc, [
+      "meta[name='citation_doi']",
+      "meta[property='citation_doi']",
+      "meta[name='DC.Identifier.DOI']",
+      "meta[name='dc.identifier']",
+      "meta[name='doi']"
+    ]);
+    const metaDoi = normalizeDoi(fromMeta);
+    if (metaDoi) {
+      return metaDoi;
+    }
+    try {
+      const link = doc.querySelector && doc.querySelector("a[href*='doi.org/10.']");
+      const linkDoi = normalizeDoi(link && link.getAttribute("href"));
+      if (linkDoi) {
+        return linkDoi;
+      }
+    } catch (_error) {
+      // 셀렉터 미지원 문서
+    }
+    return "";
+  }
+
+  function findDoiInHtml(html) {
+    const source = String(html || "");
+    const meta = source.match(/<meta[^>]+(?:citation_doi|DC\.Identifier\.DOI)[^>]*>/i);
+    if (meta) {
+      const content = meta[0].match(/content\s*=\s*["']([^"']+)["']/i);
+      const fromMeta = normalizeDoi(content && content[1]);
+      if (fromMeta) {
+        return fromMeta;
+      }
+    }
+    return normalizeDoi((source.match(/doi\.org\/(10\.\d{4,9}\/[^\s"'<>]+)/i) || [])[0] || "");
+  }
+
+  // ── 서지 내보내기 형식 생성 (팝업의 .bib/.ris 내보내기) ──
+
+  // BibTeX 인용 키. 국내 논문은 로마자 표기가 없어 ASCII만 남기면 전부
+  // "paper2025"로 충돌한다. 최근 BibTeX 도구(biber, Zotero, BibLaTeX)는 UTF-8
+  // 키를 그대로 받으므로, ASCII가 없으면 한글 이름을 그대로 쓴다.
+  function citationKey(meta) {
+    const data = meta || {};
+    const author = (Array.isArray(data.authors) && data.authors[0]) || "";
+    const asciiAuthor = String(author).replace(/[^A-Za-z]/g, "").toLowerCase();
+    const keyAuthor = asciiAuthor || String(author).replace(/[^A-Za-z0-9가-힣]/g, "");
+    const year = String(data.year || "").replace(/\D/g, "");
+    const firstWord = String(data.titleMain || "").split(/\s+/)[0] || "";
+    const titleWord = firstWord.replace(/[^A-Za-z0-9가-힣]/g, "").slice(0, 12);
+    return [keyAuthor || "paper", year, titleWord].filter(Boolean).join("") || "paper";
+  }
+
+  function fullTitleOf(meta) {
+    const main = cleanValue(meta.titleMain);
+    const sub = cleanValue(meta.titleSub);
+    return sub ? `${main}: ${sub}` : main;
+  }
+
+  function renderBibtex(meta) {
+    const data = meta || {};
+    const isThesis = Boolean(data.thesisInstitution || data.thesisDegree);
+    const type = isThesis
+      ? (String(data.thesisDegree || "").includes("박사") ? "phdthesis" : "mastersthesis")
+      : "article";
+    const lines = [];
+    const push = (key, value) => {
+      const text = cleanValue(value);
+      if (text) {
+        lines.push(`  ${key} = {${text}}`);
+      }
+    };
+    push("author", (Array.isArray(data.authors) ? data.authors : []).join(" and "));
+    push("title", fullTitleOf(data));
+    if (isThesis) {
+      push("school", data.thesisInstitution || data.publisher);
+    } else {
+      push("journal", data.journalName);
+      push("publisher", data.publisher);
+    }
+    push("year", data.year);
+    push("volume", data.volume);
+    push("number", data.issue);
+    if (data.pageFirst) {
+      push("pages", data.pageLast ? `${data.pageFirst}--${data.pageLast}` : String(data.pageFirst));
+    }
+    push("doi", data.doi);
+    push("url", data.pageUrl);
+    return `@${type}{${citationKey(data)},\n${lines.join(",\n")}\n}\n`;
+  }
+
+  function renderRis(meta) {
+    const data = meta || {};
+    const isThesis = Boolean(data.thesisInstitution || data.thesisDegree);
+    const lines = [`TY  - ${isThesis ? "THES" : "JOUR"}`];
+    const push = (tag, value) => {
+      const text = cleanValue(value);
+      if (text) {
+        lines.push(`${tag}  - ${text}`);
+      }
+    };
+    (Array.isArray(data.authors) ? data.authors : []).forEach((name) => push("AU", name));
+    push("TI", fullTitleOf(data));
+    if (isThesis) {
+      push("PB", data.thesisInstitution || data.publisher);
+    } else {
+      push("T2", data.journalName);
+      push("PB", data.publisher);
+    }
+    push("PY", data.year);
+    push("VL", data.volume);
+    push("IS", data.issue);
+    push("SP", data.pageFirst);
+    push("EP", data.pageLast);
+    push("DO", data.doi);
+    push("UR", data.pageUrl);
+    lines.push("ER  - ");
+    return `${lines.join("\n")}\n`;
+  }
+
+
+  // ── Crossref 응답 파싱 ──
+  //
+  // DOI만 있으면 어떤 사이트든 정확한 서지를 얻을 수 있는 최후 방어선이다.
+  // 다만 국내 논문은 Crossref에 영문 제목·영문 학술지명만 등록된 경우가 많아,
+  // 호출부에서 "비어 있는 칸만" 채우는 데 쓴다. 사이트가 준 한글 값을 덮지 않는다.
+  function parseCrossrefWork(payload) {
+    const message = payload && (payload.message || payload);
+    if (!message || typeof message !== "object") {
+      return {};
+    }
+    const out = {};
+    const title = Array.isArray(message.title) ? message.title[0] : message.title;
+    if (title) {
+      Object.assign(out, splitTitle(cleanValue(String(title))));
+    }
+    const authors = Array.isArray(message.author) ? message.author : [];
+    const names = authors
+      .map((person) => {
+        if (!person || typeof person !== "object") {
+          return "";
+        }
+        if (person.name) {
+          return cleanValue(person.name);
+        }
+        const given = cleanValue(person.given);
+        const family = cleanValue(person.family);
+        if (!given && !family) {
+          return "";
+        }
+        // 한글 이름은 given/family가 나뉘어 있어도 붙여 쓴다.
+        if (/[가-힣]/.test(`${given}${family}`)) {
+          return `${family}${given}`.trim();
+        }
+        return `${given} ${family}`.trim();
+      })
+      .map(cleanValue)
+      .filter(Boolean);
+    if (names.length) {
+      out.authors = names;
+    }
+    const container = Array.isArray(message["container-title"])
+      ? message["container-title"][0]
+      : message["container-title"];
+    if (container) {
+      out.journalName = cleanValue(String(container));
+    }
+    if (message.publisher) {
+      out.publisher = cleanValue(String(message.publisher));
+    }
+    if (message.volume) {
+      out.volume = cleanValue(String(message.volume));
+    }
+    if (message.issue) {
+      out.issue = cleanValue(String(message.issue));
+    }
+    if (message.page) {
+      Object.assign(out, parsePages(String(message.page)));
+    }
+    const dateParts = (message.issued && message.issued["date-parts"]) ||
+      (message.published && message.published["date-parts"]) ||
+      (message["published-print"] && message["published-print"]["date-parts"]) ||
+      (message["published-online"] && message["published-online"]["date-parts"]);
+    const yearValue = Array.isArray(dateParts) && Array.isArray(dateParts[0]) ? dateParts[0][0] : "";
+    if (yearValue) {
+      out.year = parseYear(String(yearValue));
+    }
+    if (message.DOI) {
+      out.doi = normalizeDoi(String(message.DOI));
+    }
+    return out;
+  }
+
   const api = {
     applyFactsToMetadata,
     blankMetadata,
+    findCitationExportText,
+    findCitationExportTextInHtml,
+    findDoi,
+    findDoiInHtml,
+    normalizeDoi,
+    parseBibtex,
+    parseCitationExport,
+    parseCrossrefWork,
+    parseRis,
+    renderBibtex,
+    renderRis,
     cleanValue,
     cleanAuthorName,
     collectFactsFromDocument,

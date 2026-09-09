@@ -662,3 +662,51 @@ footer {
 #delete-preset:hover {
   background: #ffe3e3;
 }
+
+/* 저장 폴더 입력 / 설정 도움말 / 서지 내보내기 버튼 */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.folder-row > span {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.folder-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.settings-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.settings-hint code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  font-size: 10.5px;
+}
+
+.export-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.export-buttons button {
+  padding: 6px 8px;
+  font-size: 11.5px;
+}

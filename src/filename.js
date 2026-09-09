@@ -137,6 +137,8 @@
     } else {
       merged.maxFilenameLength = Math.min(maxLenCap, Math.max(minLen, Math.floor(maxLen)));
     }
+    merged.downloadFolder = String(merged.downloadFolder || "").trim().slice(0, 200);
+    merged.useCrossref = merged.useCrossref === true;
     return merged;
   }
 
@@ -219,6 +221,37 @@
     return output;
   }
 
+  // 폴더 이름 한 조각을 안전하게 만든다. Chrome은 suggest()에 절대경로,
+  // 상위 디렉터리(..), 예약 문자가 들어오면 제안을 통째로 무시한다.
+  function sanitizeFolderSegment(value) {
+    const cleaned = String(value || "")
+      .replace(/[<>:"|?*\\/\x00-\x1F]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^[. ]+/, "")
+      .replace(/[. ]+$/, "")
+      .trim();
+    if (!cleaned || cleaned === "." || cleaned === "..") {
+      return "";
+    }
+    return cleaned.slice(0, 60);
+  }
+
+  // 설정한 폴더 경로를 실제 접두사로 만든다. {year}는 발행연도로 바뀌고,
+  // 연도를 모르면 그 조각은 통째로 빠진다("논문/{year}" -> "논문/").
+  function renderFolderPrefix(meta, settings) {
+    const raw = String((settings && settings.downloadFolder) || "").trim();
+    if (!raw) {
+      return "";
+    }
+    const year = String((meta && meta.year) || "").replace(/\D/g, "");
+    const segments = raw
+      .replace(/\{\s*year\s*\}/gi, year)
+      .split(/[\\/]+/)
+      .map(sanitizeFolderSegment)
+      .filter(Boolean);
+    return segments.length ? `${segments.join("/")}/` : "";
+  }
+
   function sanitizeFilenameBase(value, maxBaseLength, maxBaseBytes) {
     const cleaned = stripKnownExtension(value)
       .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
@@ -268,7 +301,9 @@
     // 여기서 별도로 fallback 계산을 반복하지 않는다
     const rendered = renderTemplate(Object.assign({}, source, { originalFilename }), activeSettings);
     const base = sanitizeFilenameBase(rendered || originalFilename || "paper", maxBaseLength, maxBaseBytes);
-    return `${base || "paper"}${extension}`;
+    // 길이 한도는 경로 전체가 아니라 파일명 한 조각에 걸리므로,
+    // 폴더 접두사는 예산 계산이 끝난 뒤에 붙인다.
+    return `${renderFolderPrefix(source, activeSettings)}${base || "paper"}${extension}`;
   }
 
   const api = {
@@ -279,7 +314,9 @@
     extensionFromFilename,
     filenameFromUrl,
     renderFilename,
+    renderFolderPrefix,
     renderTemplate,
+    sanitizeFolderSegment,
     resolveSeparator,
     safeSettings,
     sanitizeFilenameBase,

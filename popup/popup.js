@@ -3,6 +3,7 @@
 
   const constants = globalThis.PaperRenameConstants;
   const filename = globalThis.PaperRenameFilename;
+  const metadataModule = globalThis.PaperRenameMetadata;
 
   const sampleMetadata = {
     authors: ["김영희", "박철수"],
@@ -595,6 +596,98 @@
     });
   }
 
+  // ── 서지 내보내기 (.bib / .ris) ──
+
+  function exportBaseName() {
+    const rendered = filename.renderFilename(
+      currentMetadata || sampleMetadata,
+      settings,
+      { filename: "citation.txt" }
+    );
+    // renderFilename은 폴더 접두사와 확장자를 붙여 준다. 여기서는 파일명만 쓴다.
+    const withoutFolder = rendered.split("/").pop() || "citation";
+    return filename.stripKnownExtension(withoutFolder) || "citation";
+  }
+
+  function exportText(format) {
+    if (!metadataModule) {
+      return "";
+    }
+    const meta = currentMetadata || sampleMetadata;
+    return format === "ris" ? metadataModule.renderRis(meta) : metadataModule.renderBibtex(meta);
+  }
+
+  function flashStatus(message) {
+    if (!els.status) {
+      return;
+    }
+    els.status.textContent = message;
+    setTimeout(() => {
+      els.status.textContent = "저장됨";
+    }, 1600);
+  }
+
+  function copyExport(format) {
+    const text = exportText(format);
+    if (!text) {
+      flashStatus("내보낼 서지가 없습니다");
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => flashStatus(`${format === "ris" ? "RIS" : "BibTeX"} 복사됨`),
+      () => flashStatus("복사 실패")
+    );
+  }
+
+  // 팝업은 일반 문서 컨텍스트라 blob URL을 만들 수 있다.
+  // (서비스 워커에는 URL.createObjectURL이 없어 백그라운드에서는 못 한다.)
+  function saveExport(format) {
+    const text = exportText(format);
+    if (!text) {
+      flashStatus("내보낼 서지가 없습니다");
+      return;
+    }
+    const extension = format === "ris" ? ".ris" : ".bib";
+    const target = `${exportBaseName()}${extension}`;
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    const release = () => setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+    // downloads API를 쓰면 팝업이 닫혀도 저장이 끝난다.
+    // <a download> 클릭은 팝업이 먼저 닫히면 조용히 취소될 수 있다.
+    if (typeof chrome !== "undefined" && chrome.downloads && chrome.downloads.download) {
+      chrome.downloads.download({ url, filename: target, conflictAction: "uniquify" }, () => {
+        const error = chrome.runtime && chrome.runtime.lastError;
+        flashStatus(error ? "저장 실패" : `${extension} 저장됨`);
+        release();
+      });
+      return;
+    }
+
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = target;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    release();
+    flashStatus(`${extension} 저장됨`);
+  }
+
+  function bindExportButtons() {
+    if (els.copyBibtex) {
+      els.copyBibtex.addEventListener("click", () => copyExport("bibtex"));
+    }
+    if (els.copyRis) {
+      els.copyRis.addEventListener("click", () => copyExport("ris"));
+    }
+    if (els.saveBibtex) {
+      els.saveBibtex.addEventListener("click", () => saveExport("bibtex"));
+    }
+    if (els.saveRis) {
+      els.saveRis.addEventListener("click", () => saveExport("ris"));
+    }
+  }
+
   function loadSettings() {
     if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.sync) {
       settings = filename.safeSettings();
@@ -632,6 +725,21 @@
       settings.maxFilenameLength = Number(els.maxLength.value) || 180;
       save();
     });
+    if (els.downloadFolder) {
+      els.downloadFolder.addEventListener("change", () => {
+        settings.downloadFolder = els.downloadFolder.value;
+        save();
+        // 저장 시 정리된 값을 입력란에 되돌려 보여준다
+        els.downloadFolder.value = String(settings.downloadFolder || "");
+      });
+    }
+    if (els.useCrossref) {
+      els.useCrossref.addEventListener("change", () => {
+        settings.useCrossref = els.useCrossref.checked;
+        save();
+      });
+    }
+    bindExportButtons();
     els.resetTemplate.addEventListener("click", () => {
       settings.template = filename.clone(filename.DEFAULT_TEMPLATE);
       renderRecipe();
@@ -732,6 +840,12 @@
   function syncStaticInputs() {
     els.includePages.checked = Boolean(settings.includePages);
     els.maxLength.value = String(settings.maxFilenameLength || 180);
+    if (els.downloadFolder) {
+      els.downloadFolder.value = String(settings.downloadFolder || "");
+    }
+    if (els.useCrossref) {
+      els.useCrossref.checked = settings.useCrossref === true;
+    }
     if (els.titleBracketMode) {
       els.titleBracketMode.value = settings.titleBracketMode || "single";
     }
@@ -750,6 +864,12 @@
     els.enabledToggle = document.getElementById("enabled-toggle");
     els.enabledLabel = document.getElementById("enabled-label");
     els.academicWarning = document.getElementById("academic-warning");
+    els.downloadFolder = document.getElementById("download-folder");
+    els.useCrossref = document.getElementById("use-crossref");
+    els.copyBibtex = document.getElementById("copy-bibtex");
+    els.copyRis = document.getElementById("copy-ris");
+    els.saveBibtex = document.getElementById("save-bibtex");
+    els.saveRis = document.getElementById("save-ris");
     els.presetSelect = document.getElementById("preset-select");
     els.savePresetBtn = document.getElementById("save-preset");
     els.deletePresetBtn = document.getElementById("delete-preset");

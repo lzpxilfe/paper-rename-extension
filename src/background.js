@@ -395,6 +395,12 @@ function isPotentialPaperDownload(downloadItem) {
   if (!downloadItem || isBlacklistedDownload(downloadItem)) {
     return false;
   }
+  // 팝업의 .bib/.ris 내보내기처럼 우리가 직접 시작한 다운로드에는 개입하지 않는다.
+  // 이름은 이미 그쪽에서 정했고, 여기서 다시 논문 파일명을 씌우면 확장자가 어긋난다.
+  const ownId = typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.id : "";
+  if (ownId && downloadItem.byExtensionId === ownId) {
+    return false;
+  }
   return Boolean(constants && typeof constants.isAcademicSite === "function" &&
     downloadValues(downloadItem).some((value) => constants.isAcademicSite(value)));
 }
@@ -791,9 +797,11 @@ function rememberContext(context, sender) {
       !metadataModule.isUsableTitle(next.metadata.titleMain)) {
     next.metadata = Object.assign({}, next.metadata, { titleMain: "" });
   }
-  pendingContexts.push({ context: next, tabId, frameId });
+  const entry = { context: next, tabId, frameId };
+  pendingContexts.push(entry);
   cleanupContexts(Date.now());
   persistContexts();
+  enrichContextWithCrossref(entry);
 }
 
 function findContextEntry(downloadItem, callback, focusInfo) {
@@ -856,6 +864,104 @@ function handleTabRelation(tab) {
   });
   cleanupContexts(now);
   persistContexts();
+}
+
+// ── DOI 기반 Crossref 서지 보강 ──
+//
+// 사이트 셀렉터가 깨져 칸이 비어도 DOI만 있으면 서지를 복구할 수 있다.
+// 다운로드 시점이 아니라 컨텍스트를 담을 때(=상세페이지를 열 때) 미리 채워두므로
+// 다운로드가 네트워크를 기다리지 않는다.
+function contextNeedsCrossref(metadata) {
+  if (!metadata || !metadata.doi) {
+    return false;
+  }
+  return !metadata.journalName ||
+    !metadata.year ||
+    !metadata.volume ||
+    !metadata.pageFirst ||
+    !Array.isArray(metadata.authors) ||
+    !metadata.authors.length;
+}
+
+// Crossref 값으로 "비어 있는 칸만" 채운다.
+// 국내 논문은 Crossref에 영문 제목·영문 학술지명만 등록된 경우가 많아,
+// 사이트가 준 한글 값을 덮으면 오히려 나빠진다.
+function mergeCrossrefIntoMetadata(metadata, extra) {
+  let changed = false;
+  Object.entries(extra || {}).forEach(([key, value]) => {
+    if (key === "authors") {
+      const hasAuthors = Array.isArray(metadata.authors) && metadata.authors.length;
+      if (!hasAuthors && Array.isArray(value) && value.length) {
+        metadata.authors = value;
+        changed = true;
+      }
+      return;
+    }
+    if (value && !metadata[key]) {
+      metadata[key] = value;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+// 컨텍스트는 페이지의 클릭마다 담기므로 같은 DOI를 반복 조회할 수 있다.
+// 공개 API에 대한 예의이자 낭비 방지 차원에서 최근 조회한 DOI는 건너뛴다.
+const crossrefQueriedDois = new Map();
+const CROSSREF_REQUERY_INTERVAL_MS = 10 * 60 * 1000;
+
+function shouldQueryCrossref(doi, now) {
+  const at = crossrefQueriedDois.get(doi);
+  if (at && now - at < CROSSREF_REQUERY_INTERVAL_MS) {
+    return false;
+  }
+  if (crossrefQueriedDois.size > 100) {
+    crossrefQueriedDois.clear();
+  }
+  crossrefQueriedDois.set(doi, now);
+  return true;
+}
+
+function enrichContextWithCrossref(entry) {
+  if (settingsCache.useCrossref !== true || typeof fetch !== "function") {
+    return;
+  }
+  const metadata = entry && entry.context && entry.context.metadata;
+  if (!contextNeedsCrossref(metadata) || !metadataModule ||
+      typeof metadataModule.parseCrossrefWork !== "function") {
+    return;
+  }
+  if (!shouldQueryCrossref(metadata.doi, Date.now())) {
+    return;
+  }
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), constants.CROSSREF_FETCH_TIMEOUT_MS)
+    : null;
+  const clearFetchTimeout = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  };
+  // credentials를 보내지 않는다. 요청에 담기는 건 DOI뿐이다.
+  fetch(`${constants.CROSSREF_API_BASE}${encodeURIComponent(metadata.doi)}`, {
+    credentials: "omit",
+    headers: { Accept: "application/json" },
+    signal: controller ? controller.signal : undefined
+  })
+    .then((response) => (response && response.ok ? response.json() : null))
+    .then((payload) => {
+      clearFetchTimeout();
+      if (!payload) {
+        return;
+      }
+      if (mergeCrossrefIntoMetadata(metadata, metadataModule.parseCrossrefWork(payload))) {
+        persistContexts();
+      }
+    })
+    .catch(() => {
+      clearFetchTimeout();
+    });
 }
 
 // 외부 확장이 문의한 다운로드에 대해 논문 파일명을 만들어 준다.
@@ -1087,7 +1193,11 @@ if (typeof module !== "undefined" && module.exports) {
     clearDownloadDiagnostics,
     cleanupContexts,
     contextScore,
+    contextNeedsCrossref,
     dcollectionDetailInfo,
+    enrichContextWithCrossref,
+    mergeCrossrefIntoMetadata,
+    shouldQueryCrossref,
     extractDcollectionId,
     extractPaperId,
     fetchDcollectionContext,
