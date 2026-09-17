@@ -57,6 +57,14 @@
     return bracketPair(settings && settings.thesisTitleBracketMode, "double");
   }
 
+  function isThesis(meta) {
+    return Boolean(meta && (
+      normalizeSpaces(meta.thesisInstitution) ||
+      normalizeSpaces(meta.thesisDegree) ||
+      /학위\s*논문/.test(normalizeSpaces(meta.publisher))
+    ));
+  }
+
   function bracketedText(text, brackets) {
     const clean = stripPdfExtension(text);
     return brackets ? `${brackets[0]}${clean}${brackets[1]}` : clean;
@@ -69,19 +77,20 @@
       return "";
     }
     const title = sub ? `${main}: ${sub}` : main || sub;
-    const isThesis = meta && meta.publisher && /학위논문/.test(meta.publisher);
-    const brackets = isThesis
+    const brackets = isThesis(meta)
       ? thesisTitleBrackets(settings)
       : bracketPair(settings && settings.titleBracketMode, "single");
     return bracketedText(title, brackets);
   }
 
   function journalText(meta, settings) {
+    if (isThesis(meta)) return "";
     const journal = normalizeSpaces(meta && meta.journalName);
     return journal ? bracketedText(journal, bracketPair(settings && settings.journalBracketMode, "double")) : "";
   }
 
   function volumeIssueText(meta) {
+    if (isThesis(meta)) return "";
     const volume = normalizeSpaces(meta && meta.volume);
     const issue = normalizeSpaces(meta && meta.issue);
     if (volume && issue) {
@@ -180,6 +189,7 @@
     bracketedText,
     compactPunctuation,
     fieldValue,
+    isThesis,
     joinAuthors,
     journalText,
     normalizeSpaces,

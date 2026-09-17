@@ -1646,6 +1646,13 @@
     ].forEach((key) => {
       next[key] = cleanValue(next[key]);
     });
+    // Thesis records have no journal section. Discard UI text or stale journal
+    // metadata even if a generic parser/citation tag populated it earlier.
+    if (citation.isThesis(next)) {
+      next.journalName = "";
+      next.volume = "";
+      next.issue = "";
+    }
     if (next.journalName) {
       next.journalName = next.journalName.split("=")[0].trim();
       next.journalName = next.journalName.replace(/\s*\([A-Za-z0-9\s,.:&'-]+\)\s*$/g, "").trim();
@@ -2227,10 +2234,10 @@
   }
 
   function renderBibtex(meta) {
-    const data = meta || {};
-    const isThesis = Boolean(data.thesisInstitution || data.thesisDegree);
+    const data = normalizeMetadata(meta);
+    const isThesis = citation.isThesis(data);
     const type = isThesis
-      ? (String(data.thesisDegree || "").includes("박사") ? "phdthesis" : "mastersthesis")
+      ? (String(data.thesisDegree || data.publisher || "").includes("박사") ? "phdthesis" : "mastersthesis")
       : "article";
     const lines = [];
     const push = (key, value) => {
@@ -2259,8 +2266,8 @@
   }
 
   function renderRis(meta) {
-    const data = meta || {};
-    const isThesis = Boolean(data.thesisInstitution || data.thesisDegree);
+    const data = normalizeMetadata(meta);
+    const isThesis = citation.isThesis(data);
     const lines = [`TY  - ${isThesis ? "THES" : "JOUR"}`];
     const push = (tag, value) => {
       const text = cleanValue(value);
