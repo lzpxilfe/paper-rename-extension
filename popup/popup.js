@@ -564,9 +564,11 @@
         els.academicWarning.style.display = isAcademic ? "none" : "flex";
       }
 
-      chrome.tabs.sendMessage(tab.id, { type: constants.MESSAGES.GET_PAGE_INFO }, (response) => {
-        if (chrome.runtime.lastError || !response || !response.success || !response.metadata || !isAcademic) {
-          if (!isAcademic) {
+      const applyPageInfo = (response) => {
+        const eligible = response && response.academic === true;
+        if (els.academicWarning) els.academicWarning.style.display = eligible ? "none" : "flex";
+        if (!response || !response.success || !response.metadata || !eligible) {
+          if (!eligible) {
             currentMetadata = {
               authors: [],
               titleMain: "",
@@ -592,6 +594,14 @@
         els.pageSource.textContent = response.metadata.source || "현재 페이지";
         updatePreview();
         syncMetaInputs();
+      };
+      chrome.runtime.sendMessage({ type: constants.MESSAGES.GET_TAB_PAGE_INFO, tabId: tab.id }, response => {
+        const error = chrome.runtime.lastError;
+        if (!error && response && response.success) { applyPageInfo(response); return; }
+        chrome.tabs.sendMessage(tab.id, { type: constants.MESSAGES.GET_PAGE_INFO }, { frameId: 0 }, page => {
+          const pageError = chrome.runtime.lastError;
+          applyPageInfo(pageError ? null : page);
+        });
       });
     });
   }

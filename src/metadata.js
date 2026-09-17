@@ -1089,7 +1089,7 @@
   function isAcademicMainPage(url) {
     if (!url) return false;
     try {
-      const parsed = new URL(url);
+      const parsed = new URL(constants.sitePolicy.academicSourceUrl(url));
       const host = parsed.hostname;
       const path = parsed.pathname.toLowerCase();
       if (/riss/i.test(host) && (path === "/" || path === "/index.do")) return true;
@@ -1110,7 +1110,7 @@
   function isAcademicListPage(url) {
     if (!url) return false;
     try {
-      const parsed = new URL(url);
+      const parsed = new URL(constants.sitePolicy.academicSourceUrl(url));
       const host = parsed.hostname;
       const path = parsed.pathname.toLowerCase();
       if (/riss/i.test(host) && /\/search\/(?:search|result)/i.test(path)) return true;
@@ -1126,7 +1126,7 @@
   function detectSource(url) {
     let parsed;
     try {
-      parsed = new URL(url || (global.location && global.location.href) || "");
+      parsed = new URL(constants.sitePolicy.academicSourceUrl(url || (global.location && global.location.href) || ""));
     } catch (_error) {
       return SOURCES.UNKNOWN || "unknown";
     }
@@ -1527,6 +1527,32 @@
     return [];
   }
 
+  // Positive scholarly evidence for publishers/proxies with an unknown hostname.
+  // A normal page title, OpenGraph tags or a DOI link alone are insufficient.
+  function hasScholarlyMetadata(doc) {
+    if (!doc || typeof doc.querySelector !== "function") return false;
+    const content = selectors => {
+      const element = doc.querySelector(selectors);
+      return element && normalizeSpaces(element.getAttribute("content") || element.textContent);
+    };
+    const title = content('meta[name="citation_title" i], meta[name="dc.title" i], meta[name="dcterms.title" i]');
+    const author = content('meta[name="citation_author" i], meta[name="dc.creator" i], meta[name="dcterms.creator" i]');
+    const identity = content('meta[name="citation_journal_title" i], meta[name="citation_doi" i], meta[name="citation_publication_date" i], meta[name="citation_date" i], meta[name="dc.date" i], meta[name="dcterms.issued" i]');
+    if (title && author && identity && isUsableTitle(title)) return true;
+    if (typeof doc.querySelectorAll !== "function") return false;
+    const scholarly = node => {
+      if (!node || typeof node !== "object") return false;
+      if (Array.isArray(node)) return node.some(scholarly);
+      const types = [].concat(node["@type"] || []);
+      if (types.some(type => /(?:^|\/)ScholarlyArticle$/i.test(type)) &&
+          (node.headline || node.name) && node.author) return true;
+      return Array.isArray(node["@graph"]) && node["@graph"].some(scholarly);
+    };
+    return Array.from(doc.querySelectorAll('script[type="application/ld+json"]')).some(script => {
+      try { return scholarly(JSON.parse(script.textContent || "")); } catch (_error) { return false; }
+    });
+  }
+
   function extractFromDocument(doc, url) {
     const pageUrl = url || (global.location && global.location.href) || "";
     const source = detectSource(pageUrl);
@@ -1534,7 +1560,7 @@
     if (!doc) {
       return meta;
     }
-    if (isAcademicMainPage(pageUrl) || isAcademicListPage(pageUrl)) {
+    if ((isAcademicMainPage(pageUrl) && !hasScholarlyMetadata(doc)) || isAcademicListPage(pageUrl)) {
       return meta;
     }
 
@@ -2354,6 +2380,7 @@
     collectFactsFromHtml,
     detectSource,
     extractFromDocument,
+    hasScholarlyMetadata,
     fixTypography,
     isAcademicListPage,
     isUsableTitle,

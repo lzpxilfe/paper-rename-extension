@@ -1,5 +1,5 @@
 if (typeof importScripts === "function") {
-  importScripts("constants.js", "citation.js", "filename.js", "metadata.js");
+  importScripts("site-policy.js", "constants.js", "citation.js", "filename.js", "metadata.js");
 } else if (typeof require === "function") {
   globalThis.PaperRenameConstants = globalThis.PaperRenameConstants || require("./constants.js");
   globalThis.PaperRenameCitation = globalThis.PaperRenameCitation || require("./citation.js");
@@ -13,19 +13,16 @@ const metadataModule = globalThis.PaperRenameMetadata;
 
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
+let pageContexts = [];
 let recentDiagnostics = [];
 let diagnosticsEnabled = false;
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
+const PAGE_CONTEXTS_STORAGE_KEY = "paperRenamePageContexts";
 const OPENER_CONTEXT_COPY_WINDOW_MS = 5000;
 // onDeterminingFilename 안에서 fetch가 다운로드를 붙잡고 있지 않도록 상한을 둔다.
 const DCOLLECTION_FETCH_TIMEOUT_MS = 3000;
 // 포커스/활성 탭 조회가 응답하지 않아도 다운로드가 멈추지 않도록 하는 상한.
 const FOCUS_INFO_TIMEOUT_MS = 700;
-// 국가유산 보고서 파일명 정리(archreport) 확장과 양방향으로 파일명을 위임하기 위한 값들.
-const ARCHREPORT_EXTENSION_ID = "pmbgfboldeeaemikpcjnbkepldchodio";
-const ARCHREPORT_RENDER_MESSAGE = "arch-report-render-filename";
-const PAPER_RENAME_RENDER_MESSAGE = "paper-rename-render-filename";
-
 // 파일명 한 조각의 UTF-8 바이트 상한을 OS에 맞춰 정한다.
 // Windows(NTFS)는 255 UTF-16 단위라 사용자의 문자 수 설정이 먼저 걸리므로 상한이 필요 없고,
 // macOS(APFS)/리눅스(ext4 등)는 255바이트라 한글 제목이 쉽게 넘쳐 별도 상한이 필요하다.
@@ -162,7 +159,8 @@ function persistContexts() {
     return;
   }
   chrome.storage.local.set({
-    [RECENT_CONTEXTS_STORAGE_KEY]: pendingContexts
+    [RECENT_CONTEXTS_STORAGE_KEY]: pendingContexts,
+    [PAGE_CONTEXTS_STORAGE_KEY]: pageContexts
   }, () => {
     consumeLastError();
   });
@@ -215,14 +213,21 @@ function restoreContexts(callback) {
     done();
     return;
   }
-  chrome.storage.local.get(RECENT_CONTEXTS_STORAGE_KEY, (result) => {
+  chrome.storage.local.get([RECENT_CONTEXTS_STORAGE_KEY, PAGE_CONTEXTS_STORAGE_KEY], (result) => {
     const stored = result && Array.isArray(result[RECENT_CONTEXTS_STORAGE_KEY])
       ? result[RECENT_CONTEXTS_STORAGE_KEY]
       : [];
     if (stored.length) {
-      pendingContexts = stored.concat(pendingContexts).slice(-constants.MAX_CONTEXTS);
-      cleanupContexts(Date.now());
+      const key = entry => JSON.stringify([entry.tabId, entry.frameId, entry.context && entry.context.pageUrl,
+        entry.context && entry.context.downloadUrl, entry.context && entry.context.capturedAt]);
+      pendingContexts = Array.from(new Map(stored.concat(pendingContexts).map(entry => [key(entry), entry])).values())
+        .slice(-constants.MAX_CONTEXTS);
     }
+    const storedPages = result && Array.isArray(result[PAGE_CONTEXTS_STORAGE_KEY]) ? result[PAGE_CONTEXTS_STORAGE_KEY] : [];
+    pageContexts = Array.from(new Map(storedPages.concat(pageContexts).map(entry =>
+      [`${entry.tabId}:${entry.frameId}`, entry])).values()).slice(-constants.MAX_CONTEXTS);
+    cleanupContexts(Date.now());
+    pageContexts = pageContexts.filter(entry => entry.context && Date.now() - entry.context.capturedAt < constants.CONTEXT_TTL_MS);
     done();
   });
 }
@@ -391,6 +396,19 @@ function isBlacklistedDownload(downloadItem) {
   return /국가유산\s*보고서\s*파일명\s*정리|archreport/i.test(extensionName);
 }
 
+function hasExplicitContextMatch(context, item) {
+  if (!context || !item) return false;
+  const same = constants.sitePolicy.sameUrl;
+  return [item.url, item.finalUrl].some(url => same(context.downloadUrl, url)) ||
+    [item.referrer, item.tabUrl].some(url => same(context.pageUrl, url));
+}
+
+function isTrustedPaperContext(context) {
+  return context && !constants.isBlacklistedSite(context.pageUrl) &&
+    (constants.isAcademicSite(context.pageUrl) || context.scholarly === true) &&
+    hasContextMetadata(context) && Boolean(context.metadata.titleMain);
+}
+
 function isPotentialPaperDownload(downloadItem) {
   if (!downloadItem || isBlacklistedDownload(downloadItem)) {
     return false;
@@ -402,12 +420,13 @@ function isPotentialPaperDownload(downloadItem) {
     return false;
   }
   return Boolean(constants && typeof constants.isAcademicSite === "function" &&
-    downloadValues(downloadItem).some((value) => constants.isAcademicSite(value)));
+    downloadValues(downloadItem).some((value) => constants.isAcademicSite(value))) ||
+    pendingContexts.some(entry => isTrustedPaperContext(entry.context) && hasExplicitContextMatch(entry.context, downloadItem));
 }
 
 function sameKnownPaperHost(left, right) {
-  const leftHost = hostnameOf(left);
-  const rightHost = hostnameOf(right);
+  const leftHost = hostnameOf(constants.sitePolicy.academicSourceUrl(left));
+  const rightHost = hostnameOf(constants.sitePolicy.academicSourceUrl(right));
   if (!leftHost || !rightHost) {
     return false;
   }
@@ -696,21 +715,27 @@ function selectContextMatch(downloadItem, nowValue, focusInfo) {
   const now = Number(nowValue) || Date.now();
   cleanupContexts(now);
   let best = null;
-  for (const entry of pendingContexts) {
+  const knownAcademicDownload = downloadValues(downloadItem).some(value => constants.isAcademicSite(value));
+  const explicit = pendingContexts.filter(entry =>
+    isTrustedPaperContext(entry.context) && hasExplicitContextMatch(entry.context, downloadItem));
+  // The public download handler gates unknown hosts on an explicit match first.
+  // Preserve legacy viewer matching for callers already carrying academic evidence.
+  const candidates = !knownAcademicDownload && explicit.length ? explicit : pendingContexts;
+  for (const entry of candidates) {
     const score = contextScore(entry, downloadItem, now, focusInfo);
     if (!best || score > best.score || (score === best.score && entry.context.capturedAt > best.entry.context.capturedAt)) {
       best = { entry, score, reason: "best-score" };
     }
   }
-  if ((!best || best.score < 4) && pendingContexts.length === 1) {
-    const only = pendingContexts[0];
+  if ((!best || best.score < 4) && candidates.length === 1) {
+    const only = candidates[0];
     if (isFreshContextEntry(only, now) && only.context.metadata && only.context.metadata.titleMain &&
         isActiveTabEntry(only, focusInfo)) {
       best = { entry: only, score: best ? best.score : 0, reason: "single-fresh-context" };
     }
   }
   if ((!best || best.score < 3) && isLikelyViewerDownload(downloadItem)) {
-    const recent = pendingContexts
+    const recent = candidates
       .filter((entry) => {
         const title = entry && entry.context && entry.context.metadata && entry.context.metadata.titleMain;
         return isFreshContextEntry(entry, now) && title &&
@@ -782,7 +807,7 @@ function chooseAfterRestore(downloadItem, callback, focusInfo) {
 }
 
 function rememberContext(context, sender) {
-  if (!context || !hasContextMetadata(context)) {
+  if (!context || constants.isBlacklistedSite(context.pageUrl) || !hasContextMetadata(context)) {
     return;
   }
   const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : -1;
@@ -799,6 +824,9 @@ function rememberContext(context, sender) {
   }
   const entry = { context: next, tabId, frameId };
   pendingContexts.push(entry);
+  pageContexts = pageContexts.filter(page => page.tabId !== tabId || page.frameId !== frameId);
+  pageContexts.push(entry);
+  pageContexts = pageContexts.slice(-constants.MAX_CONTEXTS);
   cleanupContexts(Date.now());
   persistContexts();
   enrichContextWithCrossref(entry);
@@ -964,26 +992,6 @@ function enrichContextWithCrossref(entry) {
     });
 }
 
-// 외부 확장이 문의한 다운로드에 대해 논문 파일명을 만들어 준다.
-// 컨텍스트를 소비(consume)하지 않는 selectContextMatch를 쓴다. 두 확장의 리스너는
-// 같은 다운로드에 대해 모두 호출되므로, 여기서 소비해 버리면 우리 리스너가 이름을
-// 만들지 못하는 경우가 생긴다.
-function renderFilenameForPeer(download) {
-  const downloadItem = download || {};
-  if (settingsCache.enabled === false) {
-    return "";
-  }
-  if (isBlacklistedDownload(downloadItem) || !isPotentialPaperDownload(downloadItem)) {
-    return "";
-  }
-  const match = selectContextMatch(downloadItem, Date.now());
-  const entry = match && match.entry;
-  if (!entry || !entry.context || !entry.context.metadata) {
-    return "";
-  }
-  return renderDownloadFilename(entry, downloadItem) || "";
-}
-
 // 닫힌 탭의 컨텍스트는 더 매칭될 이유가 없다. TTL(30분)을 기다리는 동안
 // 스토리지에 남아 진단 로그와 폴백 후보를 어지럽히므로 즉시 지운다.
 function forgetTabContexts(tabId) {
@@ -991,8 +999,10 @@ function forgetTabContexts(tabId) {
     return;
   }
   const before = pendingContexts.length;
+  const pagesBefore = pageContexts.length;
   pendingContexts = pendingContexts.filter((entry) => !entry || entry.tabId !== tabId);
-  if (pendingContexts.length !== before) {
+  pageContexts = pageContexts.filter((entry) => !entry || entry.tabId !== tabId);
+  if (pendingContexts.length !== before || pageContexts.length !== pagesBefore) {
     persistContexts();
   }
 }
@@ -1013,6 +1023,7 @@ function registerChromeListeners() {
   }
   if (hasChromeApi(["tabs", "onUpdated"])) {
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      if (changeInfo.status === "loading") forgetTabContexts(tabId);
       if (changeInfo.url) {
         handleTabRelation(tab);
       }
@@ -1046,6 +1057,14 @@ function registerChromeListeners() {
       rememberContext(message.context, sender);
       return false;
     }
+    if (message && message.type === constants.MESSAGES.GET_TAB_PAGE_INFO) {
+      restoreContexts(() => {
+        const entries = pageContexts.filter(entry => entry.tabId === message.tabId && isTrustedPaperContext(entry.context));
+        entries.sort((a, b) => b.context.capturedAt - a.context.capturedAt);
+        sendResponse(entries.length ? { success: true, academic: true, metadata: entries[0].context.metadata } : { success: false });
+      });
+      return true;
+    }
     if (message && message.type === constants.MESSAGES.GET_DOWNLOAD_DIAGNOSTICS) {
       loadDiagnostics((diagnostics) => {
         sendResponse({ success: true, enabled: diagnosticsEnabled, diagnostics });
@@ -1067,99 +1086,47 @@ function registerChromeListeners() {
     return false;
   });
 
-  // 국가유산 보고서 파일명 정리(archreport)와의 역방향 핸드셰이크.
-  // archreport가 먼저 파일명 결정 권한을 잡았는데 학술 논문 다운로드라면,
-  // 여기에 문의해서 논문 파일명을 대신 받아 갈 수 있다.
-  // (반대 방향은 onDeterminingFilename 안에서 이미 archreport에 문의한다.)
-  // 이 통로가 있어야 두 확장의 설치·재로드 순서와 무관하게 항상 옳은 이름이 나온다.
-  if (hasChromeApi(["runtime", "onMessageExternal"])) {
-    chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-      if (!message || message.type !== PAPER_RENAME_RENDER_MESSAGE) {
-        return false;
-      }
-      if (!sender || sender.id !== ARCHREPORT_EXTENSION_ID) {
-        return false;
-      }
-      sendResponse({ filename: renderFilenameForPeer(message.download) });
-      return false;
-    });
-  }
-
   if (hasChromeApi(["downloads", "onDeterminingFilename"])) {
     chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-      if (settingsCache.enabled === false || !isPotentialPaperDownload(downloadItem)) {
-        recordDownloadDiagnostic({
-          status: "skipped",
-          reason: skipReason(downloadItem),
-          downloadItem
-        });
-        return false;
-      }
-      collectFocusInfo((focusInfo) => {
-        findContextEntry(downloadItem, (entry) => {
-          // 다운로드가 대기 중에 취소됐을 수 있으므로 suggest 호출은 안전하게 감싼다.
-          const safeSuggest = (suggestion) => {
-            try {
-              suggest(suggestion);
-            } catch (_error) {
-              consumeLastError();
-            }
-          };
-          if (!entry || !entry.context || !entry.context.metadata) {
-            recordDownloadDiagnostic({
-              status: "no-context",
-              reason: "no-matching-metadata",
-              downloadItem
-            });
-            // 국가유산 보고서 파일명 정리(archreport)와의 협업: 우선순위가 여기 있어도
-            // 자국(archreport)이 컨텍스트를 갖고 있으면 그 파일명을 대신 지정한다.
-            // 이로써 두 확장의 설치 순서와 무관하게 올바른 파일명이 결정된다.
-            const hasRuntime = typeof chrome !== "undefined" && chrome.runtime &&
-              typeof chrome.runtime.sendMessage === "function";
-            if (hasRuntime) {
-              try {
-                chrome.runtime.sendMessage(ARCHREPORT_EXTENSION_ID, {
-                  type: ARCHREPORT_RENDER_MESSAGE,
-                  download: {
-                    id: downloadItem && downloadItem.id,
-                    url: downloadItem && downloadItem.url,
-                    finalUrl: downloadItem && downloadItem.finalUrl,
-                    referrer: downloadItem && downloadItem.referrer,
-                    tabUrl: downloadItem && downloadItem.tabUrl,
-                    filename: downloadItem && downloadItem.filename,
-                    tabId: downloadItem && downloadItem.tabId
-                  }
-                }, (response) => {
-                  const queryError = consumeLastError();
-                  const filename = response && response.filename;
-                  if (!queryError && filename) {
-                    safeSuggest({ filename, conflictAction: "uniquify" });
-                  } else {
-                    safeSuggest();
-                  }
-                });
-                return;
-              } catch (_error) {
-                // 외부 메시지 불가(미설치/차단) — 기존 동작으로 폴백
-              }
-            }
+      if (isBlacklistedDownload(downloadItem)) return false;
+      let finished = false;
+      const safeSuggest = suggestion => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        try { suggest(suggestion); } catch (_error) { consumeLastError(); }
+      };
+      // Storage/focus/metadata failures must not indefinitely hold a download.
+      const timeout = setTimeout(() => safeSuggest(), 5000);
+      try {
+        loadSettings(() => restoreContexts(() => {
+          if (finished) return;
+          if (settingsCache.enabled === false || !isPotentialPaperDownload(downloadItem)) {
+            recordDownloadDiagnostic({ status: "skipped", reason: skipReason(downloadItem), downloadItem });
             safeSuggest();
             return;
           }
-          const filename = renderDownloadFilename(entry, downloadItem);
-          recordDownloadDiagnostic({
-            status: "renamed",
-            reason: entry.diagnosticMatch && entry.diagnosticMatch.reason || "matched-context",
-            downloadItem,
-            entry,
-            suggestedFilename: filename
+          collectFocusInfo(focusInfo => {
+            if (finished) return;
+            findContextEntry(downloadItem, entry => {
+              if (finished) return;
+              if (settingsCache.enabled === false || !entry || !entry.context || !entry.context.metadata) {
+                recordDownloadDiagnostic({ status: "no-context", reason: "no-matching-metadata", downloadItem });
+                safeSuggest();
+                return;
+              }
+              try {
+                const filename = renderDownloadFilename(entry, downloadItem);
+                recordDownloadDiagnostic({
+                  status: "renamed", reason: entry.diagnosticMatch && entry.diagnosticMatch.reason || "matched-context",
+                  downloadItem, entry, suggestedFilename: filename
+                });
+                safeSuggest(filename ? { filename, conflictAction: "uniquify" } : undefined);
+              } catch (_error) { safeSuggest(); }
+            }, focusInfo);
           });
-          safeSuggest({
-            filename,
-            conflictAction: "uniquify"
-          });
-        }, focusInfo);
-      });
+        }));
+      } catch (_error) { safeSuggest(); }
       return true;
     });
   }
@@ -1178,6 +1145,7 @@ if (typeof module !== "undefined" && module.exports) {
       },
       reset() {
         pendingContexts = [];
+        pageContexts = [];
         recentDiagnostics = [];
         diagnosticsEnabled = false;
         settingsCache = filenameModule.safeSettings();
@@ -1210,7 +1178,6 @@ if (typeof module !== "undefined" && module.exports) {
     loadDiagnostics,
     loadSettings,
     rememberContext,
-    renderFilenameForPeer,
     recordDownloadDiagnostic,
     restoreContexts,
     selectContextEntry,

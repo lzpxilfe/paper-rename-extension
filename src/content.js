@@ -34,6 +34,28 @@
     return;
   }
 
+  function pageUrl() {
+    if (/^about:(?:blank|srcdoc)/i.test(location.href)) {
+      try {
+        if (window.parent !== window && /^https?:/i.test(window.parent.location.href)) return window.parent.location.href;
+      } catch (_error) {}
+      return document.referrer || location.href;
+    }
+    return location.href;
+  }
+
+  function isScholarlyPage() {
+    return !constants.isBlacklistedSite(pageUrl()) &&
+      (constants.isAcademicSite(pageUrl()) || metadataModule.hasScholarlyMetadata(document));
+  }
+
+  function citationPdfUrl() {
+    const element = document.querySelector('meta[name="citation_pdf_url" i]');
+    const value = element && element.getAttribute("content");
+    if (!value) return "";
+    try { return new URL(value, pageUrl()).href; } catch (_error) { return ""; }
+  }
+
   const DOWNLOAD_TEXT_PATTERN = /(?:PDF|원문|본문|다운로드|내려받기|파일|Full\s*Text|Download|View\s*PDF)/i;
   const DOWNLOAD_SOURCE_PATTERN = /(?:pdf|download|down|file|fulltext|original|원문|다운로드|fnFile|fileDown|downloadFile)/i;
 
@@ -206,7 +228,7 @@
   function getCurrentMetadata() {
     try {
       let docToExtract = document;
-      let urlToExtract = location.href;
+      let urlToExtract = pageUrl();
 
       if (constants && typeof constants.isBlacklistedSite === "function" && constants.isBlacklistedSite(urlToExtract)) {
         return lastMetadata || metadataModule.blankMetadata(metadataModule.detectSource(urlToExtract), urlToExtract);
@@ -442,7 +464,7 @@
   }
 
   function sendDownloadContext(control) {
-    if (!canUseRuntimeMessaging()) {
+    if (!canUseRuntimeMessaging() || !isScholarlyPage()) {
       return;
     }
     // debounce: pointerdown → click 연속 발화 시 중복 전송 방지
@@ -461,7 +483,8 @@
       metadata: Object.assign({}, metadata, {
         originalFilename: metadata.originalFilename || originalFilenameFromControl(control, downloadUrl)
       }),
-      pageUrl: location.href,
+      pageUrl: pageUrl(),
+      scholarly: isScholarlyPage(),
       downloadUrl,
       originalFilename: originalFilenameFromControl(control, downloadUrl),
       source: metadata.source,
@@ -498,7 +521,8 @@
         try {
           sendResponse({
             success: true,
-            metadata: getCurrentMetadata()
+            academic: isScholarlyPage(),
+            metadata: isScholarlyPage() ? getCurrentMetadata() : null
           });
         } catch (error) {
           sendResponse({
@@ -513,42 +537,44 @@
     markRuntimeInvalidated(error);
   }
 
-  // 매니페스트가 https://*/* 를 매칭하는 이유는 전국 대학 도서관 프록시 도메인을
-  // 미리 열거할 수 없기 때문이지, 모든 사이트에서 동작해야 해서가 아니다.
-  // 학술 사이트(프록시 포함)가 아니면 상시 리스너와 초기 추출을 모두 건너뛴다.
-  //
-  // 팝업의 수동 조립기는 영향을 받지 않는다. popup.js는 비학술 페이지에서
-  // GET_PAGE_INFO 응답을 어차피 버리고 빈 폼으로 시작하므로(loadActiveTabMetadata),
-  // 여기서 미리 뽑아둔 메타데이터는 쓰이는 곳이 없다.
-  // 메시지 리스너는 위에서 이미 등록했으므로 팝업 통신도 그대로 동작한다.
-  const isAcademicPage = constants.isAcademicSite(location.href);
-  if (!isAcademicPage) {
-    return;
+  // URLs are not tied to a specific school. Unknown proxy hosts require actual
+  // scholarly metadata before any click listeners or context collection start.
+  let listening = false;
+  function activate() {
+    if (!isScholarlyPage() || isLoginPage()) return false;
+    if (!listening) {
+      listening = true;
+      document.addEventListener("pointerdown", handlePossibleDownload, true);
+      document.addEventListener("click", handlePossibleDownload, true);
+      document.addEventListener("change", handlePossibleDownload, true);
+      document.addEventListener("keydown", handleKeyboard, true);
+    }
+    return true;
   }
 
-  document.addEventListener("pointerdown", handlePossibleDownload, true);
-  document.addEventListener("click", handlePossibleDownload, true);
-  document.addEventListener("change", handlePossibleDownload, true);
-  document.addEventListener("keydown", handleKeyboard, true);
-
+  let initialFingerprint = "";
   function sendInitialContext() {
-    if (isLoginPage()) {
+    if (!activate()) {
       return;
     }
     const metadata = getCurrentMetadata();
     if (hasUsefulMetadata(metadata) && !isGenericPageMetadata(metadata) && !isRissSearchPage(metadata) && !/search|srch/i.test(location.pathname)) {
       const context = {
         metadata,
-        pageUrl: location.href,
-        downloadUrl: "",
+        pageUrl: pageUrl(),
+        scholarly: isScholarlyPage(),
+        downloadUrl: citationPdfUrl(),
         originalFilename: "",
         source: metadata.source,
         capturedAt: Date.now()
       };
+      const fingerprint = JSON.stringify([context.pageUrl, context.downloadUrl, metadata]);
+      if (fingerprint === initialFingerprint) return;
+      initialFingerprint = fingerprint;
       sendContext(context);
     }
   }
 
-  getCurrentMetadata();
-  setTimeout(sendInitialContext, 500);
+  if (activate()) getCurrentMetadata();
+  [500, 1500, 4000].forEach(delay => setTimeout(sendInitialContext, delay));
 })();

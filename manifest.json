@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "논문 PDF 인용식 파일명",
   "description": "국내 학술 DB에서 논문 PDF를 다운로드할 때 인용식에 가까운 파일명으로 자동 저장합니다.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "permissions": [
     "downloads",
     "storage",
@@ -26,7 +26,8 @@
     "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*",
     "https://*.openlib.uos.ac.kr/*",
     "https://*.dcollection.net/*",
-    "https://*/*"
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -40,38 +41,23 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.riss.kr/*",
-        "https://www.kci.go.kr/kciportal/*",
-        "https://*.kiss.kstudy.com/Detail*/Ar*",
-        "https://*.dbpia.com/journal/articleDetail*",
-        "https://*.dbpia.com/journal/detail*",
-        "https://*.dbpia.co.kr/journal/articleDetail*",
-        "https://*.dbpia.co.kr/journal/detail*",
-        "https://*.earticle.net/Article/*",
-        "https://*.scholar.kyobobook.co.kr/*",
-        "https://*.koreascience.or.kr/*",
-        "https://scienceon.kisti.re.kr/*",
-        "https://*.krm.or.kr/*",
-        "https://scholar-kyobobook-co-kr-ssl.openlib.uos.ac.kr/*",
-        "https://*.openlib.uos.ac.kr/*",
-        "https://*.dcollection.net/*",
-        "https://*/*"
+        "https://*/*",
+        "http://*/*"
       ],
       "js": [
+        "src/site-policy.js",
         "src/constants.js",
         "src/citation.js",
         "src/filename.js",
         "src/metadata.js",
         "src/content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ],
-  "externally_connectable": {
-    "ids": [
-      "pmbgfboldeeaemikpcjnbkepldchodio"
-    ]
-  },
   "action": {
     "default_title": "논문 PDF 인용식 파일명",
     "default_popup": "popup/popup.html",
