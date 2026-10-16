@@ -91,6 +91,34 @@
     return match ? `.${match[1].toLowerCase()}` : "";
   }
 
+  // 실제 파일 형식을 알려주는 확장자만 믿는다. 다운로드 URL의 경로 끝(.kci, .do, .jsp 등)은
+  // 서버 스크립트 이름일 뿐이라, 이걸 쓰면 "논문제목.kci"처럼 열리지 않는 파일이 생긴다.
+  const DOCUMENT_EXTENSIONS = /^\.(?:pdf|hwp|hwpx|doc|docx|zip|epub|djvu|ppt|pptx|xls|xlsx|txt|rtf|odt|xps|tif|tiff)$/;
+  const MIME_EXTENSIONS = {
+    "application/pdf": ".pdf",
+    "application/x-pdf": ".pdf",
+    "application/haansofthwp": ".hwp",
+    "application/x-hwp": ".hwp",
+    "application/vnd.hancom.hwp": ".hwp",
+    "application/vnd.hancom.hwpx": ".hwpx",
+    "application/msword": ".doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/zip": ".zip",
+    "application/epub+zip": ".epub"
+  };
+
+  function chooseExtension(originalFilename, downloadItem) {
+    const item = downloadItem || {};
+    const candidates = [
+      // Chrome이 Content-Disposition/MIME으로 정한 이름이 실제 파일 형식에 가장 가깝다.
+      extensionFromFilename(item.filename),
+      MIME_EXTENSIONS[String(item.mime || "").toLowerCase().split(";")[0].trim()] || "",
+      extensionFromFilename(originalFilename),
+      extensionFromFilename(item.finalUrl || item.url)
+    ];
+    return candidates.find(ext => ext && DOCUMENT_EXTENSIONS.test(ext)) || ".pdf";
+  }
+
   function filenameFromUrl(url) {
     if (!url) {
       return "";
@@ -287,11 +315,7 @@
       (downloadItem && downloadItem.filename) ||
       filenameFromUrl(downloadItem && (downloadItem.finalUrl || downloadItem.url)) ||
       "";
-    const extension =
-      extensionFromFilename(originalFilename) ||
-      extensionFromFilename(downloadItem && downloadItem.filename) ||
-      extensionFromFilename(downloadItem && (downloadItem.finalUrl || downloadItem.url)) ||
-      ".pdf";
+    const extension = chooseExtension(originalFilename, downloadItem);
     const maxBaseLength = Math.max(1, activeSettings.maxFilenameLength - extension.length);
     const byteBudget = Number(options && options.maxBytes);
     const maxBaseBytes = Number.isFinite(byteBudget) && byteBudget > 0
@@ -311,6 +335,7 @@
     FIELD_LABELS,
     SEPARATOR_VALUES,
     clone,
+    chooseExtension,
     extensionFromFilename,
     filenameFromUrl,
     renderFilename,

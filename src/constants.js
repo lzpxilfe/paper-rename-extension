@@ -12,7 +12,8 @@
     CLEAR_DOWNLOAD_DIAGNOSTICS: "paper-rename-clear-download-diagnostics",
     SET_DOWNLOAD_DIAGNOSTICS_ENABLED: "paper-rename-set-download-diagnostics-enabled",
     GET_PAGE_INFO: "paper-rename-get-page-info",
-    GET_TAB_PAGE_INFO: "paper-rename-get-tab-page-info"
+    GET_TAB_PAGE_INFO: "paper-rename-get-tab-page-info",
+    COOP_STATUS: "paper-rename-coop-status"
   };
 
   const SOURCES = {

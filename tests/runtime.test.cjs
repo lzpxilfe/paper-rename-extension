@@ -39,7 +39,7 @@ test('opaque university proxy with scholarly meta tags publishes usable download
   seed(worker, captured, 7);
   const [result] = await worker.download({ id: 1, url: captured.downloadUrl, filename: 'download.pdf', mime: 'application/pdf' });
   assert.ok(result.filename.includes(meta.titleMain));
-  assert.equal(worker.external.length, 0);
+  assert.ok(worker.external.every(([id, message]) => /^[a-p]{32}$/.test(id) && message.protocol === 'kr-download-filename-coop'));
 });
 test('unknown publisher in HTTP iframe can be read by popup through its tab cache', t => {
   const page = content(html, 'http://journal.proxy.different-college.edu/article/123');
@@ -81,8 +81,9 @@ test('normalization is shared across source-specific parsers and site classifica
 test('metadata-less academic download yields without requesting a report filename', async t => {
   const worker = createWorker(root); t.after(() => worker.dispose());
   const results = await worker.download({ id: 2, url: 'https://www.riss.kr/download.pdf', filename: 'download.pdf' });
-  assert.ok(results.every(value => !value)); assert.equal(worker.external.length, 0);
-  assert.equal(worker.chrome.runtime.onMessageExternal.listeners.length, 0);
+  assert.ok(results.every(value => !value));
+  // 상대 확장에게는 프로토콜 문의만 보낸다(보고서 이름을 "요청"하는 게 아니라 같은 결론을 내기 위해).
+  assert.ok(worker.external.every(([id, message]) => /^[a-p]{32}$/.test(id) && message.type === 'decide'));
 });
 test('unknown CDN downloads require an exact URL or page referrer, never just an active tab', async t => {
   const worker = createWorker(root); t.after(() => worker.dispose());
@@ -112,6 +113,6 @@ test('iframe popup metadata survives download consumption and worker restart, bu
   assert.ok((await worker.download({ id: 8, url, filename: 'download.pdf' }))[0]);
   const restarted = createWorker(root, { data: worker.data }); t.after(() => restarted.dispose());
   assert.equal(restarted.message({ type: 'paper-rename-get-tab-page-info', tabId: 22 }).metadata.titleMain, meta.titleMain);
-  restarted.chrome.tabs.onUpdated.listeners.forEach(fn => fn(22, { status: 'loading' }, { id: 22 }));
+  restarted.chrome.tabs.onUpdated.listeners.forEach(fn => fn(22, { status: 'loading', url: 'https://opaque.any-school.edu/other' }, { id: 22 }));
   assert.equal(restarted.message({ type: 'paper-rename-get-tab-page-info', tabId: 22 }).success, false);
 });

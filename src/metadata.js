@@ -1107,20 +1107,100 @@
     return false;
   }
 
-  function isAcademicListPage(url) {
+  function isAcademicListPage(url, knownSource) {
     if (!url) return false;
     try {
       const parsed = new URL(constants.sitePolicy.academicSourceUrl(url));
       const host = parsed.hostname;
       const path = parsed.pathname.toLowerCase();
-      if (/riss/i.test(host) && /\/search\/(?:search|result)/i.test(path)) return true;
-      if (/dcollection/i.test(host) && /^\/search(?:\/|$)/i.test(path)) return true;
+      // 불투명 프록시는 호스트로 사이트를 알 수 없으니 문서 지문으로 알아낸 출처를 쓴다.
+      const is = (hostPattern, sourceKey) => hostPattern.test(host) || (knownSource && knownSource === SOURCES[sourceKey]);
+      if (is(/riss/i, "RISS") && /\/search\/(?:search|result)/i.test(path)) return true;
+      if (is(/dcollection/i, "DCOLLECTION") && /^\/search(?:\/|$)/i.test(path)) return true;
       // KCI 검색 결과 화면은 페이지 전체 추출이 사이트 문구로 오염되므로
       // 목록 페이지로 간주해 행(row) 단위 파싱만 사용한다.
       // (path는 소문자화된 값이다. 논문 상세는 ciSereArtiView.kci)
-      if (/kci\.go\.kr/i.test(host) && /(?:searlist|artilist|artisear|ciseresearch)\.kci/i.test(path)) return true;
+      if (/(?:searlist|artilist|artisear|ciseresearch)\.kci$/i.test(path) && (/kci\.go\.kr/i.test(host) || /\/kciportal\//.test(path))) return true;
+      if (is(/dbpia/i, "DBPIA") && /^\/search\//i.test(path)) return true;
+      if (/scholar\.google/i.test(host) && /^\/scholar$/i.test(path)) return true;
     } catch (_e) {}
     return false;
+  }
+
+  // 학교 프록시 중에는 원래 호스트 이름을 전혀 남기지 않는 곳(불투명 프록시)이 있다.
+  // 그럴 때는 문서 자체의 흔적(정규 URL, 사이트 이름, 원 사이트로 남은 링크, 고유한 경로)으로
+  // 어느 학술 DB의 화면인지 알아낸다. URL로 알 수 있으면 이 함수는 쓰이지 않는다.
+  const PATH_SIGNATURES = [
+    // 다른 사이트의 흔한 주소와 겹치지 않도록 대소문자와 시작 위치까지 맞춘다.
+    // (경로 감싸기 프록시는 /_Lib_Proxy_Url/https://원래주소/... 형태라 시작 위치 대신 경계로 본다.)
+    [/(?:^|\/)kciportal\/(?:ci|po|landing)\//, "KCI"],
+    [/(?:^|\/)search\/detail\/DetailView\.do$/, "RISS"],
+    [/(?:^|\/)journal\/articleDetail$/, "DBPIA"],
+    [/(?:^|\/)Detail\/Ar$/, "KISS"],
+    [/(?:^|\/)thesis\/thesis-view\.asp$/, "KISS"],
+    [/(?:^|\/)Article\/A\d{3,}$/, "EARTICLE"],
+    [/(?:^|\/)srch\/selectPORSrchArticle\.do$/, "SCIENCEON"],
+    [/(?:^|\/)article\/JAKO\d{6,}\.page$/, "KOREASCIENCE"],
+    [/(?:^|\/)srch\/srchDetail\/\d{6,}$/, "DCOLLECTION"]
+  ];
+  const TITLE_SIGNATURES = [
+    [/\bRISS\b|학술연구정보서비스/i, "RISS"],
+    [/\bKCI\b|한국학술지\s*인용색인/i, "KCI"],
+    [/\bDBpia\b|누리미디어/i, "DBPIA"],
+    [/\bKISS\b|한국학술정보/i, "KISS"],
+    [/\beArticle\b/i, "EARTICLE"],
+    [/\bScienceON\b/i, "SCIENCEON"],
+    [/\bKoreaScience\b/i, "KOREASCIENCE"],
+    [/\bdCollection\b/i, "DCOLLECTION"],
+    [/교보\s*(?:문고\s*)?스콜라|\bScholar\s*Kyobo/i, "SCHOLAR"],
+    [/\bKRM\b|기초학문자료센터/i, "KRM"]
+  ];
+
+  // 경로만으로 학술 DB 화면임을 알 수 있는 고유한 주소 모양. 불투명 프록시에서 쓴다.
+  function pathSignatureSource(url) {
+    let pathname = "";
+    try { pathname = new URL(url || "").pathname; } catch (_error) { return ""; }
+    for (const [pattern, key] of PATH_SIGNATURES) {
+      if (pattern.test(pathname) && SOURCES[key]) return SOURCES[key];
+    }
+    return "";
+  }
+
+  function detectSourceFromDocument(doc, url) {
+    const unknown = SOURCES.UNKNOWN || "unknown";
+    if (!doc || typeof doc.querySelector !== "function") return unknown;
+    const fromUrl = value => {
+      if (!value) return "";
+      const source = detectSource(value);
+      return source && source !== unknown ? source : "";
+    };
+    const attr = (selector, name) => {
+      try {
+        const element = doc.querySelector(selector);
+        return element ? String(element.getAttribute(name) || "") : "";
+      } catch (_error) { return ""; }
+    };
+    const direct = fromUrl(attr('link[rel="canonical" i]', "href")) ||
+      fromUrl(attr('meta[property="og:url" i]', "content")) ||
+      fromUrl(attr('meta[name="citation_abstract_html_url" i]', "content")) ||
+      fromUrl(attr('meta[name="citation_pdf_url" i]', "content"));
+    if (direct) return direct;
+    const byPath = pathSignatureSource(url || (global.location && global.location.href) || "");
+    if (byPath) return byPath;
+    const names = [doc.title, attr('meta[property="og:site_name" i]', "content"),
+      attr('meta[name="application-name" i]', "content")].join(" ");
+    for (const [pattern, key] of TITLE_SIGNATURES) {
+      if (pattern.test(names) && SOURCES[key]) return SOURCES[key];
+    }
+    // 프록시가 미처 바꾸지 못한 원 사이트 링크(로고, 저작권 안내 등)가 남는 경우가 많다.
+    try {
+      const nodes = Array.from(doc.querySelectorAll("a[href^='http'], link[href^='http'], script[src^='http'], form[action^='http']")).slice(0, 400);
+      for (const node of nodes) {
+        const found = fromUrl(node.getAttribute("href") || node.getAttribute("src") || node.getAttribute("action"));
+        if (found) return found;
+      }
+    } catch (_error) {}
+    return unknown;
   }
 
   function detectSource(url) {
@@ -1201,6 +1281,34 @@
       .replace(/\s*-\s*(RISS|KCI|KISS|DBpia|eArticle|교보문고|스콜라|KoreaScience|ScienceON|KRM).*$/i, ""));
   }
 
+  const SITE_NAME_PATTERN = new RegExp("^(?:" + [
+    "RISS", "KCI", "KISS", "DBpia", "e-?Article", "ScienceON", "KoreaScience", "KRM", "dCollection",
+    "Google\\s*(?:학술\\s*검색|Scholar)", "교보\\s*스콜라", "교보문고\\s*스콜라", "Kyobo\\s*Scholar",
+    "한국학술지인용색인", "한국학술지\\s*인용색인", "학술연구정보서비스", "한국학술정보", "누리미디어",
+    "국회도서관", "국립중앙도서관", "국가전자도서관", "기초학문자료센터", "서울역사아카이브", "서울역사편찬원",
+    "원문\\s*(?:보기|뷰어)", "PDF\\s*(?:Viewer|뷰어)", "뷰어", "Viewer", "StreamDocs", "학위논문\\s*원문",
+    "도서관", "전자도서관", "Library", "Proxy", "로그인"
+  ].join("|") + ")(?:\\s*[-|:·>]\\s*(?:RISS|KCI|KISS|DBpia|홈|메인|Home|Main|상세(?:보기)?|원문(?:보기)?|Viewer|뷰어|검색))*$", "i");
+
+  // "원문 PDF 다운로드", "Full Text 보기"처럼 버튼 문구로만 이루어진 문자열은 제목이 아니다.
+  const CONTROL_WORDS = new Set(["원문", "pdf", "hwp", "다운로드", "다운", "내려받기", "보기", "원문보기", "미리보기",
+    "저장", "받기", "새창", "새", "창", "열기", "download", "view", "full", "text", "fulltext", "무료", "유료",
+    "바로가기", "링크", "link", "html", "파일", "첨부", "첨부파일", "file", "save", "open", "kci", "riss", "외부",
+    "url", "이동", "원문복사", "복사", "신청", "구매", "열람", "이용"]);
+
+  function isControlLabel(value) {
+    const tokens = cleanValue(value).toLowerCase().replace(/[\[\]()<>{}:|/·,.\-]+/g, " ").split(/\s+/).filter(Boolean);
+    return tokens.length > 0 && tokens.length <= 6 && tokens.every(token => CONTROL_WORDS.has(token));
+  }
+
+  function isSiteNameTitle(value) {
+    const text = cleanValue(value).replace(/[()（）\[\]]/g, " ").replace(/\s+/g, " ").trim();
+    return SITE_NAME_PATTERN.test(text) ||
+      // "○○대학교 도서관", "○○대학교 학술정보원" 같은 프록시/도서관 화면 제목
+      // 뒤에 다른 말이 붙으면("○○대학교 도서관 이용 실태 연구") 논문 제목일 수 있으므로 구분자로 이어질 때만 거른다.
+      /^[가-힣A-Za-z\s]{1,20}(?:대학교?|University)\s*(?:중앙)?(?:도서관|학술정보원|학술정보관|Library)(?:\s*[-|:·>]\s*.{0,20})?$/i.test(text);
+  }
+
   function isUsableTitle(value) {
     const text = cleanValue(value);
     if (/(?:dCollection\s*디지털\s*학술정보\s*유통시스템|디지털\s*학술정보\s*유통시스템)/i.test(text)) {
@@ -1218,6 +1326,11 @@
       return false;
     }
     if (text.length < 4 || text.length > 180) {
+      return false;
+    }
+    // 뷰어 팝업·프록시 화면은 문서 제목이 사이트 이름뿐이다("한국학술지인용색인").
+    // 이걸 논문 제목으로 쓰면 이름을 안 바꾸느니만 못하므로 사이트 이름 자체는 거른다.
+    if (isSiteNameTitle(text) || isControlLabel(text)) {
       return false;
     }
     if (/^(초록|키워드|논문정보|참고문헌|인용현황|원문\s*찾아보기|Download|Loading)$/i.test(text)) {
@@ -1346,6 +1459,32 @@
       }
     }
     return out;
+  }
+
+  // Google 학술검색 결과 한 줄: h3.gs_rt(제목), div.gs_a("저자1, 저자2 - 학술지, 2024 - 호스트").
+  function parseScholarResultRow(container, pageUrl) {
+    const out = blankMetadata(SOURCES.UNKNOWN || "unknown", pageUrl || "");
+    if (!container || typeof container.querySelector !== "function") return out;
+    const titleNode = container.querySelector(".gs_rt, h3");
+    const byline = container.querySelector(".gs_a");
+    if (!titleNode) return out;
+    const title = cleanValue(textOf(titleNode)).replace(/^(?:\[[^\]]{1,12}\]\s*)+/, "").trim();
+    if (isUsableTitle(title)) Object.assign(out, splitTitle(title));
+    const parts = cleanValue(textOf(byline)).split(/\s+[-–]\s+/);
+    if (parts[0]) {
+      out.authors = parts[0].split(/\s*,\s*/).map(name => cleanValue(name.replace(/…|\.\.\.$/g, ""))).filter(name => name && name.length <= 40);
+    }
+    if (parts.length >= 3) {
+      const venue = parts.slice(1, -1).join(" - ");
+      const yearMatch = venue.match(/(?:^|[,\s])((?:19|20)\d{2})(?:$|[,\s])/);
+      if (yearMatch) out.year = yearMatch[1];
+      const journal = cleanValue(venue.replace(/,?\s*(?:19|20)\d{2}\s*$/, "").replace(/…$/, ""));
+      if (journal && !/^(?:19|20)\d{2}$/.test(journal)) out.journalName = journal;
+    } else if (parts.length === 2) {
+      const yearMatch = parts[1].match(/((?:19|20)\d{2})/);
+      if (yearMatch) out.year = yearMatch[1];
+    }
+    return normalizeMetadata(out);
   }
 
   function parseResultText(text, source, pageUrl) {
@@ -1555,12 +1694,15 @@
 
   function extractFromDocument(doc, url) {
     const pageUrl = url || (global.location && global.location.href) || "";
-    const source = detectSource(pageUrl);
+    let source = detectSource(pageUrl);
+    if (source === (SOURCES.UNKNOWN || "unknown") && doc) {
+      source = detectSourceFromDocument(doc, pageUrl);
+    }
     let meta = blankMetadata(source, pageUrl);
     if (!doc) {
       return meta;
     }
-    if ((isAcademicMainPage(pageUrl) && !hasScholarlyMetadata(doc)) || isAcademicListPage(pageUrl)) {
+    if ((isAcademicMainPage(pageUrl) && !hasScholarlyMetadata(doc)) || isAcademicListPage(pageUrl, source)) {
       return meta;
     }
 
@@ -2386,6 +2528,9 @@
     collectFactsFromDocument,
     collectFactsFromHtml,
     detectSource,
+    detectSourceFromDocument,
+    pathSignatureSource,
+    isSiteNameTitle,
     extractFromDocument,
     hasScholarlyMetadata,
     fixTypography,
@@ -2401,6 +2546,8 @@
     parseDcollectionVolumeLine,
     parsePages,
     parseResultText,
+    parseScholarResultRow,
+    isControlLabel,
     parseVolumeIssue,
     parseYear,
     removeNonKoreanParen,

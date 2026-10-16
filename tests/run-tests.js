@@ -1430,19 +1430,17 @@ test("tabs openerTabId relation copies parent context to viewer tab", () => {
   assert.equal(entry.context.metadata.titleMain, fullMeta.titleMain);
 });
 
-test("tabs openerTabId relation ignores stale parent context", () => {
+test("viewer tab opened long after the detail page loaded still gets the parent paper", () => {
+  // 상세페이지를 한참 읽다가 원문보기(새 탭)를 누르는 게 보통이다. 예전에는 부모 정보가
+  // 5초보다 오래되면 버려서 이름이 안 바뀌었다.
   background._state.reset();
   const now = Date.now();
-  const staleMeta = Object.assign({}, fullMeta, {
-    titleMain: "stale parent paper",
-    source: "dCollection"
-  });
-
+  const parentMeta = Object.assign({}, fullMeta, { titleMain: "오래 읽은 부모 논문", source: "dCollection" });
   background.rememberContext({
-    metadata: staleMeta,
+    metadata: parentMeta,
     pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=old-paper",
     downloadUrl: "",
-    capturedAt: now - 6000
+    capturedAt: now - 5 * 60 * 1000
   }, { tab: { id: 30 }, frameId: 0 });
 
   background.handleTabRelation({
@@ -1451,38 +1449,40 @@ test("tabs openerTabId relation ignores stale parent context", () => {
     openerTabId: 30
   });
 
-  assert.ok(!background._state.pendingContexts.some((entry) => entry.tabId === 31));
-  assert.equal(background.chooseContextEntry({
+  const entry = background.chooseContextEntry({
     tabId: 31,
     url: "https://viewer.dcollection.net/streamdocs/view/sd;streamdocsId=new-paper",
     filename: "download.pdf"
-  }, now), null);
+  }, now + 500);
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, "오래 읽은 부모 논문");
 });
 
-test("tabs openerTabId relation copies fresh parent context", () => {
+test("parent context captured after the viewer opened is not used for that viewer", () => {
+  // 뷰어를 연 뒤 부모 탭에서 다른 논문으로 옮겨 갔다면, 뷰어에서 받은 파일은 처음 논문이다.
   background._state.reset();
   const now = Date.now();
-  const freshMeta = Object.assign({}, fullMeta, {
-    titleMain: "fresh parent paper",
-    source: "dCollection"
-  });
-
   background.rememberContext({
-    metadata: freshMeta,
-    pageUrl: "https://snu.dcollection.net/jsp/common/DcSearchSetLink.jsp?sItemId=fresh-paper",
+    metadata: Object.assign({}, fullMeta, { titleMain: "뷰어를 연 논문" }),
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?control_no=A1",
     downloadUrl: "",
-    capturedAt: now - 2000
+    capturedAt: now - 60000
+  }, { tab: { id: 40 }, frameId: 0 });
+  background.handleTabRelation({ id: 41, url: "https://viewer.example.test/view", openerTabId: 40 });
+  background.rememberContext({
+    metadata: Object.assign({}, fullMeta, { titleMain: "나중에 본 다른 논문" }),
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?control_no=B2",
+    downloadUrl: "",
+    capturedAt: now + 30000
   }, { tab: { id: 40 }, frameId: 0 });
 
-  background.handleTabRelation({
-    id: 41,
-    url: "https://viewer.dcollection.net/originalViewer.jsp?streamdocsId=fresh-paper",
-    openerTabId: 40
-  });
-
-  const copied = background._state.pendingContexts.find((entry) => entry.tabId === 41);
-  assert.ok(copied);
-  assert.equal(copied.context.metadata.titleMain, "fresh parent paper");
+  const entry = background.chooseContextEntry({
+    tabId: 41,
+    url: "https://viewer.example.test/download",
+    filename: "download.pdf"
+  }, now + 40000, { activeTabIds: [41], focusedTabId: 41 });
+  assert.ok(entry);
+  assert.equal(entry.context.metadata.titleMain, "뷰어를 연 논문");
 });
 
 test("constants.isAcademicSite recognizes university proxy hosts", () => {
@@ -2219,6 +2219,135 @@ test("our own .bib/.ris exports are never renamed", () => {
   } finally {
     delete global.chrome;
   }
+});
+
+
+// ── 0.2.0: 접근 경로와 무관한 매칭 ──
+
+test("extension comes from the real file type, not the download script name", () => {
+  assert.equal(filename.chooseExtension("ciSereArtiOrteDown.kci", { filename: "ART1.pdf" }), ".pdf");
+  assert.equal(filename.chooseExtension("download.do", { filename: "download.do", mime: "application/pdf" }), ".pdf");
+  assert.equal(filename.chooseExtension("", { filename: "report.hwp" }), ".hwp");
+  assert.equal(filename.chooseExtension("view.jsp", { filename: "view.jsp" }), ".pdf");
+  const rendered = filename.renderFilename(Object.assign({}, fullMeta, { originalFilename: "ciSereArtiOrteDown.kci" }),
+    filename.safeSettings(), { filename: "ART1.pdf", url: "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiOrteDown.kci" });
+  assert.ok(rendered.endsWith(".pdf"), rendered);
+});
+
+test("site names and button labels are never used as paper titles", () => {
+  for (const value of ["한국학술지인용색인", "RISS 상세보기", "DBpia", "KCI 원문 미리보기", "원문 PDF 다운로드",
+    "PDF 다운로드", "Full Text 보기", "서울시립대학교 도서관", "dCollection 디지털 학술정보 유통시스템", "Google 학술 검색"]) {
+    assert.equal(metadata.isUsableTitle(value), false, value);
+  }
+  for (const value of ["백제 한성기 토기의 편년", "KCI 등재지의 인용 구조 분석", "PDF 문서 보존 전략 연구", "RISS 이용자 행태 연구",
+    "지방대학 도서관 이용 실태 연구", "서울대학교 도서관 소장 고문헌 연구", "국립대학 도서관의 장서 개발"]) {
+    assert.equal(metadata.isUsableTitle(value), true, value);
+  }
+});
+
+test("KCI detail pages are not mistaken for search lists", () => {
+  const detail = "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART003168264";
+  assert.equal(metadata.isAcademicListPage(detail), false);
+  assert.equal(metadata.isAcademicListPage("https://www.kci.go.kr/kciportal/po/search/poTotalSearList.kci"), true);
+  assert.equal(metadata.isAcademicListPage("https://www.riss.kr/search/detail/DetailView.do?control_no=1"), false);
+  assert.equal(metadata.isAcademicListPage("https://www.riss.kr/search/Search.do?query=x"), true);
+});
+
+test("opaque proxies are recognised by distinctive academic paths", () => {
+  assert.equal(metadata.pathSignatureSource("https://lib.any-univ.ac.kr/search/detail/DetailView.do?control_no=1"), "RISS");
+  assert.equal(metadata.pathSignatureSource("https://lib.any-univ.ac.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci"), "KCI");
+  assert.equal(metadata.pathSignatureSource("https://www.example.com/blog/post"), "");
+  assert.equal(metadata.pathSignatureSource("https://news.example.com/news/detail/article/123"), "");
+  assert.equal(metadata.pathSignatureSource("https://libproxy.univ.ac.kr/_Lib_Proxy_Url/https://www.riss.kr/search/detail/DetailView.do"), "RISS");
+});
+
+test("Google Scholar result rows yield title, authors, journal and year", () => {
+  const { parseHTML } = require("linkedom");
+  const { document } = parseHTML(`<div class="gs_r gs_or gs_scl"><div class="gs_ri">
+    <h3 class="gs_rt"><span class="gs_ctg2">[PDF]</span> <a href="#">백제 한성기 토기의 편년</a></h3>
+    <div class="gs_a">김철수, 이영희 - 백제학보, 2024 - kci.go.kr</div></div></div>`);
+  const actual = metadata.parseScholarResultRow(document.querySelector(".gs_r"), "https://scholar.google.co.kr/scholar?q=x");
+  assert.equal(actual.titleMain, "백제 한성기 토기의 편년");
+  assert.deepEqual(actual.authors, ["김철수", "이영희"]);
+  assert.equal(actual.journalName, "백제학보");
+  assert.equal(actual.year, "2024");
+});
+
+test("the download's tab is found without a tabId (Chrome's DownloadItem has none)", () => {
+  background._state.reset();
+  const now = Date.now();
+  // 원문보기 팝업(탭 41)이 상세페이지 탭(40)에서 열렸고, 팝업 안에서 받았다.
+  background.rememberContext({
+    metadata: Object.assign({}, fullMeta, { titleMain: "부모 탭의 논문" }),
+    pageUrl: "https://www.riss.kr/search/detail/DetailView.do?control_no=A1",
+    downloadUrl: "",
+    capturedAt: now - 60000
+  }, { tab: { id: 40 }, frameId: 0 });
+  background.handleTabRelation({ id: 41, openerTabId: 40 });
+  background.recordTabTop(41, "https://www.dbpia.co.kr/pdf/pdfView.do?nodeId=NODE1", now - 1000);
+  const viewerDownload = { url: "https://www.dbpia.co.kr/pdf/download.do?nodeId=NODE1", referrer: "https://www.dbpia.co.kr/pdf/pdfView.do?nodeId=NODE1", filename: "NODE1.pdf" };
+  assert.equal(background.resolveDownloadTabId(viewerDownload), 41);
+
+  // 주소로 이동한 것이 다운로드가 된 경우(탭 주소는 그대로): 이동 기록으로 탭을 찾는다.
+  background.recordNavigation(40, "https://www.riss.kr/search/download/FullTextDownload.do?control_no=A1", now);
+  assert.equal(background.resolveDownloadTabId({ url: "https://www.riss.kr/search/download/FullTextDownload.do?control_no=A1", referrer: "" }), 40);
+});
+
+test("wrapped KCI ids match and RISS uses control_no instead of the material-type code", () => {
+  assert.equal(background.extractPaperId("https://www.kci.go.kr/x/ciSereArtiOrteDown.kci?sereArticleSearchBean.artiId=ART1"), "artiId:ART1");
+  assert.equal(background.extractPaperId("https://www.riss.kr/search/detail/DetailView.do?p_mat_type=1a0202e37d52c72d&control_no=abc"), "control_no:abc");
+});
+
+test("a download pointing at a different paper id never takes this context", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART1",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 5 }, frameId: 0 });
+  assert.equal(background.chooseContextEntry({
+    tabId: 5,
+    url: "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiOrteDown.kci?sereArticleSearchBean.artiId=ART2",
+    filename: "ART2.pdf"
+  }, now + 100), null);
+});
+
+test("context survives the tab's own loading event caused by the download click", () => {
+  // 예전에는 다운로드 링크 클릭으로 탭이 "loading"이 되면 이 탭의 정보가 지워졌다.
+  const { createWorker } = require("./helpers/chrome.cjs");
+  const worker = createWorker(path.join(__dirname, ".."), { id: "abcdefghijklmnopabcdefghijklmnop", register: false });
+  try {
+    worker.message({ type: "paper-rename-download-context", context: {
+      metadata: fullMeta, pageUrl: "https://www.riss.kr/search/detail/DetailView.do?control_no=abc",
+      downloadUrl: "", capturedAt: Date.now()
+    } }, { tab: { id: 22 }, frameId: 0 });
+    worker.chrome.tabs.onUpdated.listeners.forEach(fn => fn(22, { status: "loading" }, { id: 22 }));
+    return worker.download({ id: 9, tabId: 22, url: "https://www.riss.kr/search/download/FullTextDownload.do?control_no=abc", filename: "FullText.pdf" })
+      .then(([result]) => {
+        assert.ok(result && result.filename.includes(fullMeta.titleMain), JSON.stringify(result));
+      }).finally(() => worker.dispose());
+  } catch (error) { worker.dispose(); throw error; }
+});
+
+test("same tab moved to an unrelated site: its downloads keep their own names", () => {
+  background._state.reset();
+  const now = Date.now();
+  background.rememberContext({
+    metadata: fullMeta,
+    pageUrl: "https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART1",
+    downloadUrl: "",
+    capturedAt: now
+  }, { tab: { id: 6 }, frameId: 0 });
+  assert.equal(background.isPotentialPaperDownload({
+    tabId: 6, url: "https://www.example-blog.com/manual.pdf", referrer: "https://www.example-blog.com/post",
+    filename: "manual.pdf", mime: "application/pdf"
+  }), false);
+  // 같은 탭에서 출처를 모르는 문서(주소 직접 입력, PDF 뷰어 저장)는 논문으로 본다.
+  assert.equal(background.isPotentialPaperDownload({
+    tabId: 6, url: "https://cdn.publisher.example/files/123.pdf", referrer: "", filename: "123.pdf", mime: "application/pdf"
+  }), true);
 });
 
 module.exports = Promise.all(pendingTests);

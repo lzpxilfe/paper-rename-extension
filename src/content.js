@@ -6,12 +6,11 @@
   const filenameModule = globalThis.PaperRenameFilename;
 
   const titleText = (document.title || "").toLowerCase();
-  const isViewerPage = /viewer/i.test(location.hostname) || 
-                       /viewer/i.test(location.pathname) || 
-                       /originalView/i.test(location.pathname) ||
-                       /popOriginal/i.test(location.pathname) ||
-                       /viewOriginal/i.test(location.pathname) ||
-                       /원문보기|원문\s*보기|original\s*view/i.test(titleText);
+  // 원문 뷰어/미리보기 창. KCI의 "원문 미리보기"는 ciSereArtiOrteView.kci, DBpia는 pdfView 등
+  // 사이트마다 이름이 달라 넓게 잡는다. 뷰어 판정은 "부모(opener) 문서의 서지를 쓸지"에만 쓰인다.
+  const isViewerPage = /viewer/i.test(location.hostname) ||
+                       /viewer|originalView|popOriginal|viewOriginal|OrteView|PreView|pdfView|pdf_view|fileView|docView|streamdocs|ebook/i.test(location.pathname) ||
+                       /원문보기|원문\s*보기|원문\s*미리보기|미리\s*보기|original\s*view|pdf\s*view/i.test(titleText);
   // 쿼리 파라미터(sessionId=, returnUrl=/login 등)까지 검사하면 논문 상세 페이지까지
   // 차단되므로 경로(pathname)만 본다.
   // 지연 평가한다. 비밀번호 입력창 검사와 innerText 읽기는 강제 레이아웃을 유발하는데,
@@ -34,6 +33,7 @@
     return;
   }
 
+
   function pageUrl() {
     if (/^about:(?:blank|srcdoc)/i.test(location.href)) {
       try {
@@ -45,8 +45,33 @@
   }
 
   function isScholarlyPage() {
-    return !constants.isBlacklistedSite(pageUrl()) &&
-      (constants.isAcademicSite(pageUrl()) || metadataModule.hasScholarlyMetadata(document));
+    const url = pageUrl();
+    if (constants.isBlacklistedSite(url)) return false;
+    return constants.isAcademicSite(url) ||
+      metadataModule.hasScholarlyMetadata(document) ||
+      // 원 주소를 남기지 않는 학교 프록시: 학술 DB 고유의 경로 모양으로 알아본다.
+      Boolean(metadataModule.pathSignatureSource && metadataModule.pathSignatureSource(url)) ||
+      // 같은 출처의 부모 창이 논문 페이지인 뷰어 팝업.
+      Boolean(isViewerPage && openerDocument());
+  }
+
+  // 같은 출처라서 읽을 수 있는 부모(opener) 창의 문서. 뷰어 팝업에서 서지를 가져올 때 쓴다.
+  function openerDocument() {
+    try {
+      const opener = window.opener;
+      if (!opener || opener === window || opener.closed) return null;
+      const doc = opener.document;
+      if (!doc || !doc.documentElement) return null;
+      const openerUrl = opener.location.href;
+      if (constants.isBlacklistedSite(openerUrl)) return null;
+      if (!(constants.isAcademicSite(openerUrl) || metadataModule.hasScholarlyMetadata(doc) ||
+            (metadataModule.pathSignatureSource && metadataModule.pathSignatureSource(openerUrl)))) {
+        return null;
+      }
+      return { doc, url: openerUrl };
+    } catch (_error) {
+      return null; // 다른 출처면 읽을 수 없다. 이 경우는 백그라운드의 탭 계보가 처리한다.
+    }
   }
 
   function citationPdfUrl() {
@@ -234,18 +259,18 @@
         return lastMetadata || metadataModule.blankMetadata(metadataModule.detectSource(urlToExtract), urlToExtract);
       }
 
-      if (isViewerPage && window.opener) {
-        try {
-          if (window.opener.document && window.opener.document.title) {
-            docToExtract = window.opener.document;
-            urlToExtract = window.opener.location.href;
+      let extracted = metadataModule.extractFromDocument(docToExtract, urlToExtract);
+      // 뷰어 팝업은 문서 자체에 서지가 없다(제목이 사이트 이름뿐). 부모 창의 논문 정보를 쓴다.
+      if (isViewerPage && !(extracted && extracted.titleMain && metadataModule.isUsableTitle(extracted.titleMain))) {
+        const opener = openerDocument();
+        if (opener) {
+          const fromOpener = metadataModule.extractFromDocument(opener.doc, opener.url);
+          if (fromOpener && fromOpener.titleMain) {
+            extracted = fromOpener;
+            urlToExtract = opener.url;
           }
-        } catch (_error) {
-          // Ignore cross-origin error
         }
       }
-
-      const extracted = metadataModule.extractFromDocument(docToExtract, urlToExtract);
       const isExtractedValid = extracted && (
         extracted.titleMain ||
         extracted.authors.length ||
@@ -280,8 +305,15 @@
     );
   }
 
+  // RISS 검색 결과 "목록"인가. 상세 화면(/search/detail/DetailView.do)도 경로에 /search/가 들어가므로
+  // 예전처럼 /search/만 보면 상세 화면에서 버튼 주변 글자를 제목으로 잘못 썼다.
   function isRissSearchPage(metadata) {
-    return metadata && metadata.source === constants.SOURCES.RISS && /\/search\//i.test(location.pathname);
+    return metadata && metadata.source === constants.SOURCES.RISS &&
+      metadataModule.isAcademicListPage(pageUrl(), metadata.source) && !/\/search\/detail\//i.test(location.pathname);
+  }
+
+  function isGoogleScholarPage() {
+    return /(?:^|\.)scholar\.google\.[a-z.]+$/i.test(location.hostname) || /scholar[-.]google/i.test(location.hostname);
   }
 
   function isGenericPageMetadata(metadata) {
@@ -305,6 +337,10 @@
     if (!hasUsefulMetadata(scoped)) {
       return false;
     }
+    // 버튼 주변에서 읽은 글자에 쓸 만한 제목이 없으면(버튼 문구뿐이면) 쓰지 않는다.
+    if (!scoped.titleMain || !metadataModule.isUsableTitle(scoped.titleMain)) {
+      return false;
+    }
     if (!hasUsefulMetadata(current)) {
       return true;
     }
@@ -325,6 +361,7 @@
       return null;
     }
     const selectors = [
+      ".gs_r",
       ".item",
       ".listCont",
       ".cont",
@@ -351,6 +388,12 @@
   }
 
   function metadataFromControl(control, knownContainer) {
+    // Google 학술검색: 결과 한 줄 단위로 제목·저자·학술지를 읽는다.
+    if (isGoogleScholarPage()) {
+      const row = safeClosest(control, ".gs_r, .gs_scl, .gs_or");
+      const parsed = row ? metadataModule.parseScholarResultRow(row, location.href) : null;
+      if (parsed && parsed.titleMain) return parsed;
+    }
     const current = getCurrentMetadata();
     const container = knownContainer || nearbyContainer(control);
     const text = container ? container.innerText || container.textContent || "" : "";
@@ -558,7 +601,11 @@
       return;
     }
     const metadata = getCurrentMetadata();
-    if (hasUsefulMetadata(metadata) && !isGenericPageMetadata(metadata) && !isRissSearchPage(metadata) && !/search|srch/i.test(location.pathname)) {
+    // 목록(검색 결과) 화면은 한 페이지에 논문이 여럿이라 페이지 단위로 담지 않는다(클릭한 행만 담는다).
+    // 예전에는 주소에 search/srch가 들어가면 모두 목록으로 봤는데, KCI 상세(ciSereArticleSearch/...)와
+    // ScienceON 상세(srch/selectPORSrchArticle.do)까지 걸려 상세페이지 정보가 미리 담기지 않았다.
+    const listPage = metadataModule.isAcademicListPage(pageUrl(), metadata.source);
+    if (hasUsefulMetadata(metadata) && metadata.titleMain && !isGenericPageMetadata(metadata) && !isRissSearchPage(metadata) && !listPage) {
       const context = {
         metadata,
         pageUrl: pageUrl(),
@@ -577,4 +624,31 @@
 
   if (activate()) getCurrentMetadata();
   [500, 1500, 4000].forEach(delay => setTimeout(sendInitialContext, delay));
+
+  // 페이지를 새로 읽지 않고 주소만 바꾸는 사이트(SPA)에서도 지금 보이는 논문을 다시 담는다.
+  // 학술 페이지에서만, 주소나 제목이 바뀌었을 때만 동작한다.
+  if (window === window.top) {
+    let lastHref = location.href;
+    let lastTitle = document.title;
+    const checkForSoftNavigation = () => {
+      if (location.href === lastHref && document.title === lastTitle) return;
+      lastHref = location.href;
+      lastTitle = document.title;
+      lastMetadata = null;
+      loginPageCache = null;
+      [300, 1500].forEach(delay => setTimeout(sendInitialContext, delay));
+    };
+    try {
+      if (window.navigation && typeof window.navigation.addEventListener === "function") {
+        window.navigation.addEventListener("navigatesuccess", checkForSoftNavigation);
+      }
+    } catch (_error) {}
+    window.addEventListener("popstate", checkForSoftNavigation);
+    let softChecks = 0;
+    const softTimer = setInterval(() => {
+      softChecks += 1;
+      if (softChecks > 120 || runtimeInvalidated) clearInterval(softTimer);
+      if (listening) checkForSoftNavigation();
+    }, 2000);
+  }
 })();

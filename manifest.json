@@ -1,13 +1,15 @@
 {
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwS8BFSMvPG1CiFofD8FptnYMlb1X7rl90XTgbgxqm5KXLANuo1e0qtgBlejauvdBqxSOyVZljrz6gxtOipIv5y6NCJXM7mPqxkGIc6Ed/UoOnuYlGcMJ2uW5kZlw6LmUMNiY4qq4Yp7ov8oMa+9qRd1knJdDZ4Q31YUURrmWBL/jFWmo/gHXqmKFMkAoCV6RZWYn7CXYmMQD7h2IHwLRwJbpWHJIV+JYmXJfjUJHCUZbgjm125yjhiwRmv3NDaF44aUNa1Q0Of0UU6Zdpy9ZO/u7KueXMYQFvODH7lm0wzZ1DZ8w5cRhEYrhqdOUs7ZJtKbA5HULR1FbYE8JlQCOLwIDAQAB",
   "manifest_version": 3,
   "name": "논문 PDF 인용식 파일명",
   "description": "국내 학술 DB에서 논문 PDF를 다운로드할 때 인용식에 가까운 파일명으로 자동 저장합니다.",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "permissions": [
     "downloads",
     "storage",
     "activeTab",
-    "tabs"
+    "tabs",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://api.crossref.org/*",

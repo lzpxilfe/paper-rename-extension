@@ -710,3 +710,9 @@ footer {
   padding: 6px 8px;
   font-size: 11.5px;
 }
+
+.coop-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}

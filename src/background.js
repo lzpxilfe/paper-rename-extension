@@ -1,6 +1,7 @@
 if (typeof importScripts === "function") {
-  importScripts("site-policy.js", "constants.js", "citation.js", "filename.js", "metadata.js");
+  importScripts("site-policy.js", "coop.js", "constants.js", "citation.js", "filename.js", "metadata.js");
 } else if (typeof require === "function") {
+  globalThis.DownloadFilenameCoop = globalThis.DownloadFilenameCoop || require("./coop.js");
   globalThis.PaperRenameConstants = globalThis.PaperRenameConstants || require("./constants.js");
   globalThis.PaperRenameCitation = globalThis.PaperRenameCitation || require("./citation.js");
   globalThis.PaperRenameFilename = globalThis.PaperRenameFilename || require("./filename.js");
@@ -14,13 +15,28 @@ const metadataModule = globalThis.PaperRenameMetadata;
 let settingsCache = filenameModule.safeSettings();
 let pendingContexts = [];
 let pageContexts = [];
+// 탭 계보: 원문보기/뷰어가 새 탭·팝업으로 열려도 "어느 논문 페이지에서 열었는지"를 추적한다.
+// { [childTabId]: { parent: tabId, at: ms } }
+let tabParents = {};
+// 탭의 최상위 문서 URL이 마지막으로 바뀐 시각. 같은 탭에서 다른 페이지로 옮긴 뒤 받은
+// 파일에 이전 논문 이름이 붙는 것을 막는 데 쓴다. { [tabId]: { url, at } }
+let tabTops = {};
+// 최근 탭 이동 기록. 크롬의 DownloadItem에는 탭 ID가 없으므로, "어느 탭에서 이 주소로 이동했는가"로
+// 다운로드가 시작된 탭을 알아낸다(주소 직접 입력, JS 이동, 숨은 iframe 등). [{ tabId, url, at }]
+let recentNavigations = [];
+const NAVIGATION_TTL_MS = 2 * 60 * 1000;
+const MAX_NAVIGATIONS = 60;
 let recentDiagnostics = [];
 let diagnosticsEnabled = false;
 const RECENT_CONTEXTS_STORAGE_KEY = "paperRenameRecentContexts";
 const PAGE_CONTEXTS_STORAGE_KEY = "paperRenamePageContexts";
+const TAB_GRAPH_STORAGE_KEY = "paperRenameTabGraph";
+const TAB_GRAPH_TTL_MS = 2 * 60 * 60 * 1000;
+const MAX_TAB_GRAPH_ENTRIES = 200;
+const MAX_LINEAGE_DEPTH = 4;
 const OPENER_CONTEXT_COPY_WINDOW_MS = 5000;
 // onDeterminingFilename 안에서 fetch가 다운로드를 붙잡고 있지 않도록 상한을 둔다.
-const DCOLLECTION_FETCH_TIMEOUT_MS = 3000;
+const DCOLLECTION_FETCH_TIMEOUT_MS = 1800;
 // 포커스/활성 탭 조회가 응답하지 않아도 다운로드가 멈추지 않도록 하는 상한.
 const FOCUS_INFO_TIMEOUT_MS = 700;
 // 파일명 한 조각의 UTF-8 바이트 상한을 OS에 맞춰 정한다.
@@ -154,13 +170,33 @@ function hasContextMetadata(context) {
   );
 }
 
+// 서비스 워커는 30초만 쉬어도 내려가며 메모리를 잃는다. 수집한 논문 정보는
+// storage.session(브라우저를 닫으면 사라짐, 디스크에 남지 않음)에 두고, 없으면 local을 쓴다.
+function contextArea() {
+  if (hasChromeApi(["storage", "session", "set"])) return chrome.storage.session;
+  if (hasChromeApi(["storage", "local", "set"])) return chrome.storage.local;
+  return null;
+}
+
+function pruneTabGraph(now) {
+  const currentTime = Number(now) || Date.now();
+  const keep = (map) => Object.fromEntries(Object.entries(map)
+    .filter(([, value]) => value && currentTime - value.at < TAB_GRAPH_TTL_MS)
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, MAX_TAB_GRAPH_ENTRIES));
+  tabParents = keep(tabParents);
+  tabTops = keep(tabTops);
+}
+
 function persistContexts() {
-  if (!hasChromeApi(["storage", "local", "set"])) {
+  const area = contextArea();
+  if (!area) {
     return;
   }
-  chrome.storage.local.set({
+  area.set({
     [RECENT_CONTEXTS_STORAGE_KEY]: pendingContexts,
-    [PAGE_CONTEXTS_STORAGE_KEY]: pageContexts
+    [PAGE_CONTEXTS_STORAGE_KEY]: pageContexts,
+    [TAB_GRAPH_STORAGE_KEY]: { parents: tabParents, tops: tabTops, navigations: recentNavigations }
   }, () => {
     consumeLastError();
   });
@@ -209,11 +245,26 @@ function setDiagnosticsEnabled(enabled, callback) {
 
 function restoreContexts(callback) {
   const done = typeof callback === "function" ? callback : () => {};
-  if (!hasChromeApi(["storage", "local", "get"])) {
+  const area = contextArea();
+  if (!area || typeof area.get !== "function") {
     done();
     return;
   }
-  chrome.storage.local.get([RECENT_CONTEXTS_STORAGE_KEY, PAGE_CONTEXTS_STORAGE_KEY], (result) => {
+  area.get([RECENT_CONTEXTS_STORAGE_KEY, PAGE_CONTEXTS_STORAGE_KEY, TAB_GRAPH_STORAGE_KEY], (result) => {
+    consumeLastError();
+    const graph = result && result[TAB_GRAPH_STORAGE_KEY];
+    if (graph && typeof graph === "object") {
+      // 메모리에 있는 최신 관계가 저장본보다 우선한다.
+      tabParents = Object.assign({}, graph.parents || {}, tabParents);
+      tabTops = Object.assign({}, graph.tops || {}, tabTops);
+      if (Array.isArray(graph.navigations)) {
+        const now = Date.now();
+        const known = new Set(recentNavigations.map(nav => `${nav.tabId} ${nav.url} ${nav.at}`));
+        recentNavigations = graph.navigations.filter(nav => nav && !known.has(`${nav.tabId} ${nav.url} ${nav.at}`))
+          .concat(recentNavigations).filter(nav => now - nav.at < NAVIGATION_TTL_MS).slice(-MAX_NAVIGATIONS);
+      }
+      pruneTabGraph(Date.now());
+    }
     const stored = result && Array.isArray(result[RECENT_CONTEXTS_STORAGE_KEY])
       ? result[RECENT_CONTEXTS_STORAGE_KEY]
       : [];
@@ -421,7 +472,10 @@ function isPotentialPaperDownload(downloadItem) {
   }
   return Boolean(constants && typeof constants.isAcademicSite === "function" &&
     downloadValues(downloadItem).some((value) => constants.isAcademicSite(value))) ||
-    pendingContexts.some(entry => isTrustedPaperContext(entry.context) && hasExplicitContextMatch(entry.context, downloadItem));
+    pendingContexts.some(entry => isTrustedPaperContext(entry.context) && hasExplicitContextMatch(entry.context, downloadItem)) ||
+    // 학교 프록시나 출판사 서버처럼 처음 보는 호스트라도, 논문 페이지(또는 그 페이지가 연
+    // 뷰어 탭)에서 받은 문서 파일이면 논문으로 본다.
+    (isDocumentDownload(downloadItem) && hasRelatedTrustedContext(downloadItem));
 }
 
 function sameKnownPaperHost(left, right) {
@@ -444,11 +498,16 @@ function extractDcollectionId(urlText) {
     return "";
   }
   const raw = String(urlText);
+  // 경로 패턴은 dCollection 주소에서만 본다. RISS 상세(/search/detail/DetailView.do)까지
+  // "DetailView"라는 같은 ID로 묶여 서로 다른 논문이 섞이던 문제가 있었다.
+  let host = "";
+  try { host = new URL(raw).hostname; } catch (_error) {}
+  const dcollectionHost = !host || /dcollection|dcoll/i.test(host);
   const inlineMatch = raw.match(/(?:streamdocsId|sItemId)[=;:'"]+([A-Za-z0-9_-]+)/i) ||
     raw.match(/orgView\(\s*['"]?([A-Za-z0-9_-]+)/i) ||
     raw.match(/\/public_resource\/pdf\/([A-Za-z0-9_-]+?)(?:[_\.]|$)/i) ||
-    raw.match(/\/(?:srch\/srchDetail|common\/orgView|search\/detail|public_resource\/detail)\/([A-Za-z0-9_-]+)/i) ||
-    raw.match(/\/handler\/[^/]+\/([A-Za-z0-9_-]+)/i);
+    (dcollectionHost && raw.match(/\/(?:srch\/srchDetail|common\/orgView|search\/detail|public_resource\/detail)\/([A-Za-z0-9_-]+)/i)) ||
+    (dcollectionHost && raw.match(/\/handler\/[^/]+\/([A-Za-z0-9_-]+)/i));
   if (inlineMatch) {
     return inlineMatch[1];
   }
@@ -465,9 +524,18 @@ function extractPaperId(urlText) {
   }
   try {
     const parsed = new URL(urlText);
-    const keys = ["cn", "artiId", "key", "nodeId", "p_mat_type", "artId", "articleId", "sItemId", "streamdocsId"];
+    // RISS의 p_mat_type은 자료 유형 코드(학술지논문·학위논문 등)라 논문을 구분하지 못한다.
+    // control_no가 RISS의 실제 논문 번호다.
+    const keys = ["control_no", "controlNo", "cn", "artiId", "key", "nodeId", "artId", "articleId", "sItemId",
+      "streamdocsId", "docId", "thesisId", "articleSeq"];
+    // KCI처럼 "sereArticleSearchBean.artiId" 형태로 감싼 이름도 같은 ID로 본다.
+    const params = new Map();
+    for (const [name, value] of parsed.searchParams.entries()) {
+      const shortName = String(name).split(".").pop().toLowerCase();
+      if (value && !params.has(shortName)) params.set(shortName, value);
+    }
     for (const key of keys) {
-      const val = parsed.searchParams.get(key);
+      const val = params.get(key.toLowerCase());
       if (val) {
         return `${key}:${val}`;
       }
@@ -481,7 +549,7 @@ function extractPaperId(urlText) {
       return `scholar:${scholarMatch[1]}`;
     }
   } catch (_error) {
-    const match = urlText.match(/(?:cn|artiId|key|nodeId|p_mat_type|sItemId|streamdocsId)[=;:'"]+([A-Za-z0-9_-]+)/i);
+    const match = urlText.match(/(?:control_no|cn|artiId|key|nodeId|sItemId|streamdocsId)[=;:'"]+([A-Za-z0-9_-]+)/i);
     if (match) {
       return match[1];
     }
@@ -622,6 +690,221 @@ function isActiveTabEntry(entry, focusInfo) {
   return focusInfo.activeTabIds.includes(tabId);
 }
 
+function validTabId(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function recordTabParent(childTabId, parentTabId, at) {
+  if (!validTabId(childTabId) || !validTabId(parentTabId) || childTabId === parentTabId) {
+    return;
+  }
+  // 순환을 만들지 않는다.
+  if (lineageLink(parentTabId, childTabId)) {
+    return;
+  }
+  // 같은 관계를 다시 알려 와도(탭 정보에 openerTabId가 계속 남아 있다) 처음 열린 시각을 지킨다.
+  const existing = tabParents[String(childTabId)];
+  if (existing && existing.parent === parentTabId) {
+    return;
+  }
+  tabParents[String(childTabId)] = { parent: parentTabId, at: Number(at) || Date.now() };
+  pruneTabGraph(Date.now());
+  persistContexts();
+}
+
+function recordTabTop(tabId, url, at) {
+  if (!validTabId(tabId) || !/^https?:/i.test(String(url || ""))) {
+    return;
+  }
+  const previous = tabTops[String(tabId)];
+  if (previous && constants.sitePolicy.sameUrl(previous.url, url)) {
+    return;
+  }
+  // 탭이 처음 도착한 사이트를 기억해 둔다. 뷰어가 쪽을 넘기며 주소를 바꾸는 것(같은 사이트)과
+  // 사용자가 다른 사이트로 옮겨 간 것(방황)을 구분하는 데 쓴다.
+  const firstSite = previous && previous.firstSite ? previous.firstSite : siteKey(url);
+  const firstUrl = previous && previous.firstUrl ? previous.firstUrl : String(url);
+  tabTops[String(tabId)] = { url: String(url), at: Number(at) || Date.now(), firstSite, firstUrl };
+  persistContexts();
+}
+
+// childTabId에서 부모 쪽으로 올라가며 ancestorTabId를 찾는다.
+// 찾으면 { depth, at }을 돌려준다. at은 ancestor 바로 아래 탭이 열린 시각이다.
+function lineageLink(childTabId, ancestorTabId) {
+  if (!validTabId(childTabId) || !validTabId(ancestorTabId) || childTabId === ancestorTabId) {
+    return null;
+  }
+  let current = childTabId;
+  for (let depth = 1; depth <= MAX_LINEAGE_DEPTH; depth++) {
+    const link = tabParents[String(current)];
+    if (!link || !validTabId(link.parent)) {
+      return null;
+    }
+    if (link.parent === ancestorTabId) {
+      return { depth, at: link.at };
+    }
+    current = link.parent;
+  }
+  return null;
+}
+
+function keyedPaperIdParts(value) {
+  const id = String(value || "");
+  const index = id.indexOf(":");
+  return index > 0 ? { key: id.slice(0, index).toLowerCase(), value: id.slice(index + 1) } : null;
+}
+
+// 같은 종류의 논문 ID가 서로 다르면 확실히 다른 논문이다.
+// (dCollection의 sItemId/streamdocsId처럼 서로 다른 ID 체계는 비교하지 않는다.)
+function conflictingPaperIds(itemId, contextId) {
+  const left = keyedPaperIdParts(itemId);
+  const right = keyedPaperIdParts(contextId);
+  return Boolean(left && right && left.key === right.key && left.key !== "dcollection" && left.value !== right.value);
+}
+
+// 같은 탭이 그 컨텍스트를 담은 뒤 다른 페이지로 옮겨 갔고, 다운로드가 그 새 페이지에서
+// 시작됐다면(referrer가 탭의 현재 주소) 예전 논문 정보는 이 다운로드와 무관하다.
+function navigatedAwayFrom(entry, downloadItem) {
+  if (!entry || !entry.context || !downloadItem || !validTabId(downloadItem.tabId)) {
+    return false;
+  }
+  const top = tabTops[String(downloadItem.tabId)];
+  const referrer = downloadItem.referrer || "";
+  const same = constants.sitePolicy.sameUrl;
+  if (!top || entry.context.capturedAt >= top.at || same(top.url, entry.context.pageUrl)) {
+    return false;
+  }
+  // 탭이 그 PDF 자체를 띄우고 있다(상세페이지 → PDF로 이동 → 저장). 이건 같은 논문이다.
+  if (same(top.url, downloadItem.url) || same(top.url, downloadItem.finalUrl)) {
+    return false;
+  }
+  if (referrer) {
+    return same(referrer, top.url);
+  }
+  // 출처가 비어 있으면, 탭이 다른 사이트로 옮겨 갔는지로 판단한다.
+  return siteKey(top.url) !== siteKey(entry.context.pageUrl) && !constants.isAcademicSite(top.url);
+}
+
+function recordNavigation(tabId, url, at) {
+  if (!validTabId(tabId) || !/^https?:/i.test(String(url || ""))) return;
+  const now = Number(at) || Date.now();
+  recentNavigations = recentNavigations.filter(nav => now - nav.at < NAVIGATION_TTL_MS);
+  recentNavigations.push({ tabId, url: String(url), at: now });
+  recentNavigations = recentNavigations.slice(-MAX_NAVIGATIONS);
+}
+
+// 크롬의 DownloadItem에는 탭 ID가 없다. 다운로드가 어느 탭에서 시작됐는지 알아낸다.
+//   1) referrer(다운로드를 시작한 페이지)가 지금 어느 탭의 주소이거나, 어느 탭에서 담은 페이지인가
+//   2) 다운로드 주소로 막 이동한 탭이 있는가(링크·JS 이동·주소 입력이 다운로드로 바뀐 경우)
+//   3) 그 PDF를 띄워 둔 탭이 있는가(PDF 뷰어에서 저장)
+function resolveDownloadTabId(downloadItem) {
+  if (!downloadItem) return -1;
+  if (validTabId(downloadItem.tabId)) return downloadItem.tabId;
+  const same = constants.sitePolicy.sameUrl;
+  const newest = (list) => list.sort((a, b) => b.at - a.at)[0];
+  const referrer = downloadItem.referrer || "";
+  if (referrer) {
+    const byTop = newest(Object.entries(tabTops)
+      .filter(([, top]) => top && same(top.url, referrer))
+      .map(([tabId, top]) => ({ tabId: Number(tabId), at: top.at })));
+    if (byTop) return byTop.tabId;
+    const byContext = newest(pendingContexts.concat(pageContexts)
+      .filter(entry => entry && entry.context && validTabId(entry.tabId) && same(entry.context.pageUrl, referrer))
+      .map(entry => ({ tabId: entry.tabId, at: entry.context.capturedAt })));
+    if (byContext) return byContext.tabId;
+    const byNav = newest(recentNavigations.filter(nav => same(nav.url, referrer)).map(nav => Object.assign({}, nav)));
+    if (byNav) return byNav.tabId;
+  }
+  const urls = [downloadItem.url, downloadItem.finalUrl].filter(Boolean);
+  const now = Date.now();
+  const byDownloadNav = newest(recentNavigations
+    .filter(nav => now - nav.at < 60000 && urls.some(url => same(nav.url, url)))
+    .map(nav => Object.assign({}, nav)));
+  if (byDownloadNav) return byDownloadNav.tabId;
+  const byViewer = newest(Object.entries(tabTops)
+    .filter(([, top]) => top && urls.some(url => same(top.url, url)))
+    .map(([tabId, top]) => ({ tabId: Number(tabId), at: top.at })));
+  return byViewer ? byViewer.tabId : -1;
+}
+
+function withResolvedTab(downloadItem) {
+  if (!downloadItem || validTabId(downloadItem.tabId)) return downloadItem;
+  const tabId = resolveDownloadTabId(downloadItem);
+  return validTabId(tabId) ? Object.assign({}, downloadItem, { tabId, tabIdResolved: true }) : downloadItem;
+}
+
+const DOCUMENT_DOWNLOAD_PATTERN = /\.(?:pdf|hwp|hwpx|doc|docx|epub|djvu|zip)(?:$|[?#])/i;
+
+function isDocumentDownload(downloadItem) {
+  if (!downloadItem) return false;
+  if (/^application\/(?:x-)?pdf\b|hwp|msword|wordprocessingml|epub/i.test(String(downloadItem.mime || ""))) return true;
+  return DOCUMENT_DOWNLOAD_PATTERN.test(String(downloadItem.filename || "")) ||
+    DOCUMENT_DOWNLOAD_PATTERN.test(String(downloadItem.finalUrl || downloadItem.url || ""));
+}
+
+function siteKey(value) {
+  const host = hostnameOf(value);
+  if (!host) return "";
+  const labels = host.split(".");
+  const secondLevel = labels[labels.length - 2] || "";
+  const take = labels.length >= 3 && /^(?:ac|co|go|or|re|ne|pe|ed|es|hs|ms|kg|mil|com|net|org|edu|gov)$/i.test(secondLevel) ? 3 : 2;
+  return labels.slice(-take).join(".");
+}
+
+// 다운로드가 그 논문 페이지에서 시작됐다고 볼 수 있는가(같은 사이트에서 시작했거나 출처를 모름).
+function referrerFitsContext(entry, downloadItem) {
+  const referrer = downloadItem && downloadItem.referrer;
+  if (!referrer) return true;
+  const pageUrl = entry && entry.context && entry.context.pageUrl;
+  if (constants.sitePolicy.sameUrl(referrer, pageUrl)) return true;
+  if (constants.isAcademicSite(referrer)) return true;
+  const left = siteKey(referrer);
+  return Boolean(left && left === siteKey(pageUrl));
+}
+
+// 새 탭이 열린 뒤 곧바로(리디렉션 포함) 도착한 페이지에서 받은 것인가. 자식 탭에서 한참 뒤
+// 다른 사이트로 옮겨 다니다 받은 파일까지 부모 논문 이름을 붙이지 않기 위한 조건이다.
+function childStayedOnViewer(downloadItem, link) {
+  const top = tabTops[String(downloadItem && downloadItem.tabId)];
+  if (!top || !link || top.at - link.at <= 15000) return true;
+  // 같은 사이트 안에서 주소만 바뀐 것(뷰어의 쪽 넘김 등)이거나 학술 사이트면 계속 뷰어로 본다.
+  return siteKey(top.url) === top.firstSite || constants.isAcademicSite(top.url);
+}
+
+// 자식 탭이 부모 논문의 원문을 띄운 창으로 보이는가. 학술 사이트이거나, 부모와 같은 사이트이거나,
+// 주소가 뷰어·원문·PDF 모양일 때만 부모 논문 이름을 물려준다(아무 새 탭에나 붙이지 않도록).
+const VIEWER_LIKE_PATTERN = /view|viewer|pdf|down|original|orte|fulltext|full_text|full-text|원문|stream|ebook|doc|file|article|paper/i;
+
+function childLooksLikeViewer(downloadItem, entry) {
+  const top = tabTops[String(downloadItem && downloadItem.tabId)];
+  const first = top && (top.firstUrl || top.url);
+  if (!first) return true;
+  if (constants.isAcademicSite(first) || [downloadItem.url, downloadItem.finalUrl].some(url => url && constants.isAcademicSite(url))) return true;
+  if (siteKey(first) && siteKey(first) === siteKey(entry && entry.context && entry.context.pageUrl)) return true;
+  try {
+    const parsed = new URL(first);
+    return VIEWER_LIKE_PATTERN.test(decodeURIComponent(parsed.pathname + parsed.search));
+  } catch (_error) {
+    return false;
+  }
+}
+
+// 같은 탭이거나 그 탭을 연 조상 탭에서 온 신뢰할 만한 논문 정보가 있는가.
+function hasRelatedTrustedContext(downloadItem) {
+  if (!downloadItem || !validTabId(downloadItem.tabId)) {
+    return false;
+  }
+  return pendingContexts.some(entry => {
+    if (!entry || !isTrustedPaperContext(entry.context)) return false;
+    if (entry.tabId === downloadItem.tabId) {
+      return !navigatedAwayFrom(entry, downloadItem) && referrerFitsContext(entry, downloadItem);
+    }
+    const link = lineageLink(downloadItem.tabId, entry.tabId);
+    return Boolean(link && entry.context.capturedAt <= link.at + 2000 && childStayedOnViewer(downloadItem, link) &&
+      childLooksLikeViewer(downloadItem, entry));
+  });
+}
+
 function contextScore(entry, downloadItem, now, focusInfo) {
   if (!entry || !entry.context || !downloadItem) {
     return 0;
@@ -635,7 +918,15 @@ function contextScore(entry, downloadItem, now, focusInfo) {
   const itemFilename = normalizeUrl(downloadItem.filename || "");
   let score = 0;
   const age = now - context.capturedAt;
-  const sameTab = Number.isInteger(downloadItem.tabId) && downloadItem.tabId >= 0 && entry.tabId === downloadItem.tabId;
+  // 같은 탭이라도 그 뒤에 다른 페이지로 옮겨 가서 받은 파일이면 같은 탭 가산점을 주지 않는다.
+  const sameTab = Number.isInteger(downloadItem.tabId) && downloadItem.tabId >= 0 && entry.tabId === downloadItem.tabId &&
+    !navigatedAwayFrom(entry, downloadItem);
+  // 이 다운로드 탭을 연 조상 탭(원문보기 팝업·새 탭 뷰어의 부모)에서 온 정보인가.
+  // 자식 탭이 열리기 전에 담긴 정보만 인정한다. 그 뒤에 부모 탭이 다른 논문으로 옮겨 갔다면
+  // 그건 지금 받는 파일과 관계없다.
+  const lineage = !sameTab && validTabId(entry.tabId) ? lineageLink(downloadItem.tabId, entry.tabId) : null;
+  const lineageValid = Boolean(lineage && context.capturedAt <= lineage.at + 2000 &&
+    childStayedOnViewer(downloadItem, lineage) && childLooksLikeViewer(downloadItem, entry));
   const freshContext = age >= 0 && age <= OPENER_CONTEXT_COPY_WINDOW_MS;
   // 약한 근거(같은 학술 사이트라는 사실, 최근에 담겼다는 사실)는 여러 창에 학술
   // 사이트를 띄워두면 전부 동점이 된다. 지금 보고 있지 않은 탭의 컨텍스트에는
@@ -647,10 +938,16 @@ function contextScore(entry, downloadItem, now, focusInfo) {
   const contextId = extractPaperId(pageUrl) || extractPaperId(contextUrl);
   if (itemId && contextId && itemId === contextId) {
     score += 12;
+  } else if (conflictingPaperIds(extractPaperId(itemUrl), contextId)) {
+    // 다운로드 URL이 다른 논문 ID를 가리키면 어떤 가산점으로도 이 정보를 쓰지 않는다.
+    return -100;
   }
 
   if (sameTab) {
     score += 8;
+  }
+  if (lineageValid) {
+    score += lineage.depth === 1 ? 8 : 6;
   }
   if (contextUrl && itemUrl && (itemUrl === contextUrl || itemUrl.includes(contextUrl) || contextUrl.includes(itemUrl))) {
     score += 8;
@@ -720,7 +1017,10 @@ function selectContextMatch(downloadItem, nowValue, focusInfo) {
     isTrustedPaperContext(entry.context) && hasExplicitContextMatch(entry.context, downloadItem));
   // The public download handler gates unknown hosts on an explicit match first.
   // Preserve legacy viewer matching for callers already carrying academic evidence.
-  const candidates = !knownAcademicDownload && explicit.length ? explicit : pendingContexts;
+  // 다운로드 주소가 다른 논문 ID를 가리키는 정보는 어떤 폴백에서도 후보가 아니다.
+  const downloadPaperId = extractPaperId(downloadItem && (downloadItem.finalUrl || downloadItem.url) || "");
+  const candidates = (!knownAcademicDownload && explicit.length ? explicit : pendingContexts)
+    .filter(entry => !conflictingPaperIds(downloadPaperId, contextIdForEntry(entry)));
   for (const entry of candidates) {
     const score = contextScore(entry, downloadItem, now, focusInfo);
     if (!best || score > best.score || (score === best.score && entry.context.capturedAt > best.entry.context.capturedAt)) {
@@ -797,7 +1097,7 @@ function shouldWaitForRissEnrichment(entry, downloadItem, nowValue) {
 
 function chooseAfterRestore(downloadItem, callback, focusInfo) {
   const entry = chooseContextEntry(downloadItem, undefined, focusInfo);
-  if (entry || !hasChromeApi(["storage", "local", "get"])) {
+  if (entry || !contextArea()) {
     callback(entry);
     return;
   }
@@ -853,45 +1153,16 @@ function findContextEntry(downloadItem, callback, focusInfo) {
   chooseAfterRestore(downloadItem, finish, focusInfo);
 }
 
+// 새 탭·팝업이 어느 탭에서 열렸는지 기록한다. 예전에는 부모 컨텍스트를 5초 안에만
+// 복사해 두었기 때문에, 상세페이지를 읽다가 원문보기를 누르면 이름이 안 바뀌었다.
+// 이제는 관계만 기록하고, 다운로드 순간에 계보를 따라 올라가 부모의 논문 정보를 찾는다.
 function handleTabRelation(tab) {
-  if (!tab || !tab.id || !tab.url) {
+  if (!tab || !validTabId(tab.id)) {
     return;
   }
-  const urlText = normalizeUrl(tab.url).toLowerCase();
-  const isViewer = /(?:viewer|view|originalview|poporiginal|vieworiginal)/i.test(urlText) ||
-                   /(?:viewer|view|originalview|poporiginal|vieworiginal)/i.test(filenameModule.filenameFromUrl(urlText));
-  if (!isViewer) {
-    return;
+  if (validTabId(tab.openerTabId)) {
+    recordTabParent(tab.id, tab.openerTabId, Date.now());
   }
-  const openerId = tab.openerTabId;
-  if (!Number.isInteger(openerId) || openerId < 0) {
-    return;
-  }
-  const now = Date.now();
-  const parentEntry = pendingContexts
-    .filter((entry) => entry && entry.tabId === openerId && entry.context && entry.context.metadata)
-    .sort((a, b) => b.context.capturedAt - a.context.capturedAt)[0];
-  if (!parentEntry) {
-    return;
-  }
-  const parentAge = now - parentEntry.context.capturedAt;
-  if (parentAge < 0 || parentAge > OPENER_CONTEXT_COPY_WINDOW_MS) {
-    return;
-  }
-  const exists = pendingContexts.some((entry) => entry && entry.tabId === tab.id && entry.context && entry.context.metadata);
-  if (exists) {
-    return;
-  }
-  const clonedContext = Object.assign({}, parentEntry.context, {
-    capturedAt: now
-  });
-  pendingContexts.push({
-    context: clonedContext,
-    tabId: tab.id,
-    frameId: 0
-  });
-  cleanupContexts(now);
-  persistContexts();
 }
 
 // ── DOI 기반 Crossref 서지 보강 ──
@@ -998,11 +1269,18 @@ function forgetTabContexts(tabId) {
   if (!Number.isInteger(tabId) || tabId < 0) {
     return;
   }
+  delete tabTops[String(tabId)];
+  delete tabParents[String(tabId)];
+  // 이 탭이 연 뷰어 탭이 아직 열려 있으면, 그 탭의 다운로드를 위해 정보를 남겨 둔다
+  // (TTL이 지나면 저절로 정리된다).
+  const hasLiveChild = Object.values(tabParents).some(link => link && link.parent === tabId);
   const before = pendingContexts.length;
   const pagesBefore = pageContexts.length;
-  pendingContexts = pendingContexts.filter((entry) => !entry || entry.tabId !== tabId);
+  if (!hasLiveChild) {
+    pendingContexts = pendingContexts.filter((entry) => !entry || entry.tabId !== tabId);
+  }
   pageContexts = pageContexts.filter((entry) => !entry || entry.tabId !== tabId);
-  if (pendingContexts.length !== before || pageContexts.length !== pagesBefore) {
+  if (pendingContexts.length !== before || pageContexts.length !== pagesBefore || true) {
     persistContexts();
   }
 }
@@ -1012,7 +1290,14 @@ function registerChromeListeners() {
     return;
   }
 
-  chrome.runtime.onInstalled.addListener(() => loadSettings());
+  chrome.runtime.onInstalled.addListener(() => {
+    loadSettings();
+    // 0.1.x는 수집한 논문 정보를 디스크(storage.local)에 남겼다. 이제는 session에 두므로 옛 사본을 지운다.
+    if (contextArea() !== (hasChromeApi(["storage", "local"]) ? chrome.storage.local : null) &&
+        hasChromeApi(["storage", "local", "remove"])) {
+      chrome.storage.local.remove([RECENT_CONTEXTS_STORAGE_KEY, PAGE_CONTEXTS_STORAGE_KEY], () => consumeLastError());
+    }
+  });
   chrome.runtime.onStartup.addListener(() => loadSettings());
   loadSettings();
   loadDiagnosticsEnabled();
@@ -1021,11 +1306,30 @@ function registerChromeListeners() {
   if (hasChromeApi(["tabs", "onCreated"])) {
     chrome.tabs.onCreated.addListener(handleTabRelation);
   }
+  // window.open 팝업, target=_blank, 리디렉션으로 열린 탭까지 출발 탭을 정확히 알려준다.
+  if (hasChromeApi(["webNavigation", "onCreatedNavigationTarget"])) {
+    chrome.webNavigation.onCreatedNavigationTarget.addListener((details) => {
+      if (details) recordTabParent(details.tabId, details.sourceTabId, details.timeStamp || Date.now());
+    });
+  }
+  // 이동이 다운로드로 바뀌면 탭 주소는 그대로라 tabs.onUpdated로는 알 수 없다. 이동 시작을 기록해 둔다.
+  if (hasChromeApi(["webNavigation", "onBeforeNavigate"])) {
+    chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+      if (details) recordNavigation(details.tabId, details.url, details.timeStamp || Date.now());
+    });
+  }
   if (hasChromeApi(["tabs", "onUpdated"])) {
+    // 예전에는 탭이 로딩을 시작하면 그 탭의 논문 정보를 지웠다. 그런데 다운로드 링크를 누르는
+    // 순간에도 탭은 로딩 상태가 되기 때문에, 클릭 정보가 먼저 도착하면 지워지고 늦게 도착하면
+    // 살아남아 "됐다가 안 됐다가"의 주원인이 됐다. 이제는 지우지 않고 주소 이동 시각만 기록한다.
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-      if (changeInfo.status === "loading") forgetTabContexts(tabId);
-      if (changeInfo.url) {
-        handleTabRelation(tab);
+      if (changeInfo && changeInfo.url) {
+        // 팝업에 보여줄 "지금 페이지 정보"만 비운다. 다운로드 매칭용 정보는 남긴다.
+        const before = pageContexts.length;
+        pageContexts = pageContexts.filter(entry => !entry || entry.tabId !== tabId ||
+          constants.sitePolicy.sameUrl(entry.context && entry.context.pageUrl, changeInfo.url));
+        if (before !== pageContexts.length) persistContexts();
+        recordTabTop(tabId, changeInfo.url, Date.now());
       }
     });
   }
@@ -1053,6 +1357,10 @@ function registerChromeListeners() {
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message && message.type === constants.MESSAGES.COOP_STATUS) {
+      coopBackground.status(peers => sendResponse({ success: true, peers }));
+      return true;
+    }
     if (message && message.type === constants.MESSAGES.DOWNLOAD_CONTEXT) {
       rememberContext(message.context, sender);
       return false;
@@ -1086,51 +1394,70 @@ function registerChromeListeners() {
     return false;
   });
 
+  // 다운로드 이름 결정은 공존 프로토콜(coop.js)을 거친다. 국가유산 보고서 확장과
+  // 서로의 결정을 물어 같은 최종 이름을 제안하므로, 설치 순서와 무관하게 결과가 같다.
   if (hasChromeApi(["downloads", "onDeterminingFilename"])) {
-    chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-      if (isBlacklistedDownload(downloadItem)) return false;
-      let finished = false;
-      const safeSuggest = suggestion => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timeout);
-        try { suggest(suggestion); } catch (_error) { consumeLastError(); }
-      };
-      // Storage/focus/metadata failures must not indefinitely hold a download.
-      const timeout = setTimeout(() => safeSuggest(), 5000);
-      try {
-        loadSettings(() => restoreContexts(() => {
-          if (finished) return;
-          if (settingsCache.enabled === false || !isPotentialPaperDownload(downloadItem)) {
-            recordDownloadDiagnostic({ status: "skipped", reason: skipReason(downloadItem), downloadItem });
-            safeSuggest();
-            return;
-          }
-          collectFocusInfo(focusInfo => {
-            if (finished) return;
-            findContextEntry(downloadItem, entry => {
-              if (finished) return;
-              if (settingsCache.enabled === false || !entry || !entry.context || !entry.context.metadata) {
-                recordDownloadDiagnostic({ status: "no-context", reason: "no-matching-metadata", downloadItem });
-                safeSuggest();
-                return;
-              }
-              try {
-                const filename = renderDownloadFilename(entry, downloadItem);
-                recordDownloadDiagnostic({
-                  status: "renamed", reason: entry.diagnosticMatch && entry.diagnosticMatch.reason || "matched-context",
-                  downloadItem, entry, suggestedFilename: filename
-                });
-                safeSuggest(filename ? { filename, conflictAction: "uniquify" } : undefined);
-              } catch (_error) { safeSuggest(); }
-            }, focusInfo);
-          });
-        }));
-      } catch (_error) { safeSuggest(); }
-      return true;
-    });
+    chrome.downloads.onDeterminingFilename.addListener(coopBackground.handleDetermining);
+  }
+  if (hasChromeApi(["runtime", "onMessageExternal"])) {
+    chrome.runtime.onMessageExternal.addListener(coopBackground.handleExternal);
   }
 }
+
+// 이 확장이 이 다운로드에 붙이고 싶은 이름을 정한다. callback({ filename, conflictAction } | undefined)
+// 같은 다운로드에 대해 coop.js가 한 번만 부른다(자기 리스너와 상대 확장의 문의가 결과를 공유).
+function decidePaperFilename(rawDownloadItem, callback) {
+  let finished = false;
+  let downloadItem = rawDownloadItem;
+  const done = suggestion => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timeout);
+    callback(suggestion);
+  };
+  // 저장소·포커스 조회가 응답하지 않아도 결정을 오래 붙잡지 않는다(coop.js의 결정 예산 3.5초 이내).
+  const timeout = setTimeout(() => done(), 3300);
+  if (isBlacklistedDownload(downloadItem)) {
+    done();
+    return;
+  }
+  try {
+    loadSettings(() => restoreContexts(() => {
+      if (finished) return;
+      downloadItem = withResolvedTab(rawDownloadItem);
+      if (settingsCache.enabled === false || !isPotentialPaperDownload(downloadItem)) {
+        recordDownloadDiagnostic({ status: "skipped", reason: skipReason(downloadItem), downloadItem });
+        done();
+        return;
+      }
+      collectFocusInfo(focusInfo => {
+        if (finished) return;
+        findContextEntry(downloadItem, entry => {
+          if (finished) return;
+          if (settingsCache.enabled === false || !entry || !entry.context || !entry.context.metadata) {
+            recordDownloadDiagnostic({ status: "no-context", reason: "no-matching-metadata", downloadItem });
+            done();
+            return;
+          }
+          try {
+            const filename = renderDownloadFilename(entry, downloadItem);
+            recordDownloadDiagnostic({
+              status: "renamed", reason: entry.diagnosticMatch && entry.diagnosticMatch.reason || "matched-context",
+              downloadItem, entry, suggestedFilename: filename
+            });
+            done(filename ? { filename, conflictAction: "uniquify" } : undefined);
+          } catch (_error) { done(); }
+        }, focusInfo);
+      });
+    }));
+  } catch (_error) { done(); }
+}
+
+const coopBackground = globalThis.DownloadFilenameCoop.createBackground({
+  role: "paper",
+  decide: decidePaperFilename,
+  sitePolicy: constants.sitePolicy
+});
 
 registerChromeListeners();
 
@@ -1146,6 +1473,9 @@ if (typeof module !== "undefined" && module.exports) {
       reset() {
         pendingContexts = [];
         pageContexts = [];
+        tabParents = {};
+        tabTops = {};
+        recentNavigations = [];
         recentDiagnostics = [];
         diagnosticsEnabled = false;
         settingsCache = filenameModule.safeSettings();
@@ -1158,6 +1488,8 @@ if (typeof module !== "undefined" && module.exports) {
       }
     },
     chooseContextEntry,
+    coopBackground,
+    decidePaperFilename,
     clearDownloadDiagnostics,
     cleanupContexts,
     contextScore,
@@ -1168,6 +1500,9 @@ if (typeof module !== "undefined" && module.exports) {
     shouldQueryCrossref,
     extractDcollectionId,
     extractPaperId,
+    recordNavigation,
+    recordTabTop,
+    resolveDownloadTabId,
     fetchDcollectionContext,
     findContextEntry,
     forgetTabContexts,
