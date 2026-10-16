@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>논문 PDF 인용식 파일명 배너</title>
+<style>
+  /* archreport 배너와 같은 글꼴을 고정된 커밋에서 불러온다. */
+  @font-face {
+    font-family: 'BannerYetHangul';
+    src: url('https://raw.githubusercontent.com/lzpxilfe/archreport/e9609fce4348ee3ca2d0a2398185f596028d2478/banner_source/NanumBarunGothic-YetHangul.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+    font-display: block;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    height: 630px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    background: #fff;
+    font-family: 'BannerYetHangul', sans-serif;
+  }
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(9, 64px);
+    grid-template-rows: repeat(10, 48px);
+  }
+  .cell {
+    width: 64px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 38px;
+    font-weight: 800;
+    line-height: 1;
+    color: #1c1917;
+  }
+  .hanja-cell { justify-content: flex-start; padding-left: 2px; }
+  .ann {
+    margin-left: 1px;
+    margin-top: -6px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #44403c;
+  }
+</style>
+</head>
+<body>
+<div id="grid" role="img" aria-label="각 학술지에서 받은 논문 파일명이 저자와 발행연도와 제목을 담지 못하여 다시 수고를 들여 고치는 일이 거듭되느니라. 내가 이를 어여삐 여겨 크롬 확장 프로그램을 만드니, 사람마다 쓰기에 날로 편안하게 하고자 할 따름이니라."></div>
+<script>
+// 훈민정음 서문에서 착안한 문안. 오른쪽 열부터 아래로 읽는다.
+// archreport 배너와 같은 9열 × 10행, 나눔바른고딕 옛한글.
+const columns = [
+  [['各','각'], ['學','학'], ['術','술'], ['誌','지'], ['에',''], ['셔',''], ['바',''], ['ᄃᆞᆫ',''], ['論','논'], ['文','문']],
+  [['파',''], ['일',''], ['名','명'], ['이',''], ['著','저'], ['者','자'], ['와',''], ['發','발'], ['行','행'], ['年','년']],
+  [['度','도'], ['와',''], ['題','제'], ['目','목'], ['ᄋᆞᆯ',''], ['담',''], ['디',''], ['몯',''], ['ᄒᆞ',''], ['야','']],
+  [['다',''], ['시',''], ['수',''], ['고',''], ['ᄅᆞᆯ',''], ['드',''], ['려',''], ['고',''], ['티',''], ['ᄂᆞᆫ','']],
+  [['이',''], ['리',''], ['거',''], ['듭',''], ['ᄒᆞ',''], ['ᄂᆞ',''], ['니',''], ['라',''], ['내',''], ['가','']],
+  [['이',''], ['ᄅᆞᆯ',''], ['어',''], ['엿',''], ['비',''], ['너',''], ['겨',''], ['크',''], ['롬',''], ['擴','확']],
+  [['張','장'], ['프',''], ['로',''], ['그',''], ['램',''], ['ᄋᆞᆯ',''], ['ᄆᆡᆼ',''], ['ᄀᆞ',''], ['노',''], ['니','']],
+  [['사',''], ['람',''], ['마',''], ['다',''], ['ᄡᅮ',''], ['메',''], ['날',''], ['로',''], ['便','편'], ['安','안']],
+  [['킈',''], ['ᄒᆞ',''], ['고',''], ['져',''], ['ᄒᆞᆯ',''], ['ᄯᆞ',''], ['ᄅᆞ',''], ['미',''], ['니',''], ['라','']]
+];
+const grid = document.getElementById('grid');
+for (const [col, cells] of columns.entries()) {
+  if (cells.length !== 10) throw new Error('Each column must contain ten cells.');
+  for (const [row, [character, reading]] of cells.entries()) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.style.gridColumn = columns.length - col;
+    cell.style.gridRow = row + 1;
+    const glyph = document.createElement('span');
+    glyph.className = 'glyph';
+    glyph.textContent = character;
+    cell.append(glyph);
+    if (reading) {
+      cell.classList.add('hanja-cell');
+      const annotation = document.createElement('span');
+      annotation.className = 'ann';
+      annotation.textContent = reading;
+      cell.append(annotation);
+    }
+    grid.append(cell);
+  }
+}
+</script>
+</body>
+</html>
