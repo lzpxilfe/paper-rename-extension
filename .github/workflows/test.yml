@@ -13,8 +13,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: 테스트 의존성 설치
+        run: npm ci
       - name: 단위 테스트
-        run: node tests/run-tests.js
+        run: npm test
       - name: manifest.json 형식 검사
         run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"
       - name: 소스 구문 검사
